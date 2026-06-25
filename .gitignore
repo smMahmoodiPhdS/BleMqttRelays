@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+libdeps/
+*.pio
+*.env
+build/
+.DS_Store
