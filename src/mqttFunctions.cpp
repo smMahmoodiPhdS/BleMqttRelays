@@ -121,6 +121,40 @@ static bool mqtt_reconnect() {
     return true;
 }
 
+// --- TEMPORARY sensor simulator (bench testing) -----------------------------
+// The relay firmware publishes no sensor data, so nothing emits ts1/cu — and the
+// app only shows a temperature card once a *current value* arrives (it gates the
+// card on updateMillis, which is set only by ts1/cu). This publishes a fake
+// current temperature to sensors/<owner>/ts1/cu so the card appears and the
+// full loop (card -> +/- -> ll/ul back to the board) can be exercised without
+// the real on-farm sensor board. Set SIMULATE_TS1 = false to disable.
+static const bool SIMULATE_TS1 = true;
+static const unsigned long SIM_INTERVAL_MS = 5000;
+static unsigned long lastSimMs = 0;
+
+static void mqtt_simulateSensors() {
+    if (!SIMULATE_TS1) return;
+    unsigned long now = millis();
+    if (now - lastSimMs < SIM_INTERVAL_MS) return;
+    lastSimMs = now;
+
+    // Triangle wave 24.0 .. 30.0 .. 24.0 to exercise heater/cooler thresholds.
+    static float simTemp = 24.0f;
+    static float simDir = 0.5f;
+    simTemp += simDir;
+    if (simTemp >= 30.0f) { simTemp = 30.0f; simDir = -0.5f; }
+    if (simTemp <= 24.0f) { simTemp = 24.0f; simDir = 0.5f; }
+
+    String topic = String("sensors/") + farmOwner + "/ts1/cu";
+    String payload = String(simTemp, 1);
+    // Non-retained, like a real live sensor reading.
+    mqttClient.publish(topic.c_str(), payload.c_str(), false);
+    Serial.print("[SIM TX] ");
+    Serial.print(topic);
+    Serial.print(" = ");
+    Serial.println(payload);
+}
+
 void loop_mqtt() {
     if (!mqttClient.connected()) {
         unsigned long now = millis();
@@ -131,4 +165,5 @@ void loop_mqtt() {
         return;
     }
     mqttClient.loop();
+    mqtt_simulateSensors();
 }
