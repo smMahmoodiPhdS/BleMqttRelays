@@ -11,6 +11,15 @@
 #define MQTT_PASSWORD "1234zxcV@"
 //int res = iranMqttClient.connect(clientId.c_str(), "", "");
 
+// Broker-facing relay value convention. Grafana's traffic-light widget can't
+// key off 0, so relay values on the broker use 1 = OFF, 2 = ON. The firmware
+// keeps the pin/logical state as a plain bool (0/1) internally and converts
+// only at the MQTT edge:
+//   pin/bool -> MQTT value : false -> "1", true -> "2"
+//   MQTT value -> pin/bool : "1" -> false (1->0), "2" -> true (2->1)
+#define RELAY_MQTT_OFF "1"
+#define RELAY_MQTT_ON  "2"
+
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
@@ -22,7 +31,8 @@ static String relayTopic(uint8_t relayNumOneBased, const char* suffix) {
 
 void mqtt_publishRelayState(uint8_t relayIndex, bool state) {
     String topic = relayTopic(relayIndex + 1, "state");
-    mqttClient.publish(topic.c_str(), state ? "1" : "0", true);
+    // Convert internal bool -> broker value (1 = off, 2 = on).
+    mqttClient.publish(topic.c_str(), state ? RELAY_MQTT_ON : RELAY_MQTT_OFF, true);
 }
 
 static void mqttCallback(char* topic, byte* payload, unsigned int length) {
