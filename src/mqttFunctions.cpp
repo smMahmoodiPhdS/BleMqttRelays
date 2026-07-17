@@ -45,6 +45,17 @@ void mqtt_publishRelayState(uint8_t relayIndex, bool state) {
 static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String topicStr(topic);
 
+    // Debug: log every inbound MQTT message (topic + payload) on the serial
+    // monitor. Useful for verifying that the app's publishes actually reach the
+    // board — e.g. relay commands, and (with the sensor subscription below) the
+    // temperature limits sensors/<owner>/ts1/ll|ul.
+    String rxMsg;
+    for (unsigned int i = 0; i < length; i++) rxMsg += (char)payload[i];
+    Serial.print("[MQTT RX] ");
+    Serial.print(topicStr);
+    Serial.print(" = ");
+    Serial.println(rxMsg);
+
     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
         if (topicStr == relayTopic(i + 1, "on")) {
             relay_setState(i, true);
@@ -88,6 +99,19 @@ static bool mqtt_reconnect() {
         mqttClient.subscribe(relayTopic(i + 1, "off").c_str());
     }
     mqttClient.subscribe(ota_versionTopic().c_str());
+
+    // --- Groundwork for on-board heater/cooler control (see reconciliation doc,
+    // "Heater/cooler control" section) ---
+    // The relay firmware historically did NOT subscribe to the sensor stream, so
+    // the app's sensors/<owner>/ts1/ll|ul limit updates never reached the board.
+    // Subscribe to temperature sensor 1 so those values arrive and show up on the
+    // serial monitor. For now they are only logged (by mqttCallback); the
+    // hysteresis heater/cooler logic from the original multiActuator firmware is
+    // still to be ported. Covers ts1/cu, ts1/ll, ts1/ul.
+    {
+        String tsTopic = String("sensors/") + farmOwner + "/ts1/#";
+        mqttClient.subscribe(tsTopic.c_str());
+    }
 
     // Republish current state on every (re)connect so a broker/dashboard that
     // just restarted still gets it, even though it's also retained.
