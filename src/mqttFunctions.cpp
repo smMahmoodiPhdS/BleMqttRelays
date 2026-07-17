@@ -29,6 +29,13 @@ static String relayTopic(uint8_t relayNumOneBased, const char* suffix) {
     return "actuator/" + String(farmOwner) + "/rl0" + String(relayNumOneBased) + "/" + suffix;
 }
 
+// Device presence topic (retained). Uses the same traffic-light-friendly values
+// as relays: 2 = online, 1 = offline. The broker publishes "1" here via the
+// Last-Will when the device drops; the device publishes "2" right after connect.
+static String presenceTopic() {
+    return "actuator/" + String(farmOwner) + "/online";
+}
+
 void mqtt_publishRelayState(uint8_t relayIndex, bool state) {
     String topic = relayTopic(relayIndex + 1, "state");
     // Convert internal bool -> broker value (1 = off, 2 = on).
@@ -45,10 +52,6 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
         }
         if (topicStr == relayTopic(i + 1, "off")) {
             relay_setState(i, false);
-            return;
-        }
-        if (topicStr == relayTopic(i + 1, "toggle")) {
-            relay_toggle(i);
             return;
         }
     }
@@ -71,12 +74,18 @@ static bool mqtt_reconnect() {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     String clientId = String("BleMqttRelay-") + farmOwner + "-" + String(random(0xffff), HEX);
-    if (!mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) return false;
+    String willTopic = presenceTopic();
+    // Last-Will: if the device drops, the broker retains "1" (offline) here.
+    // Args: clientId, user, pass, willTopic, willQoS, willRetain, willMessage.
+    if (!mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD,
+                            willTopic.c_str(), 0, true, "1")) return false;
+
+    // Announce presence (retained "2" = online) now that we're connected.
+    mqttClient.publish(willTopic.c_str(), "2", true);
 
     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
         mqttClient.subscribe(relayTopic(i + 1, "on").c_str());
         mqttClient.subscribe(relayTopic(i + 1, "off").c_str());
-        mqttClient.subscribe(relayTopic(i + 1, "toggle").c_str());
     }
     mqttClient.subscribe(ota_versionTopic().c_str());
 

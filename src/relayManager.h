@@ -9,6 +9,5 @@ typedef void (*RelayStateListener)(uint8_t relayIndex, bool state);
 
 void setup_relays();
 void relay_setState(uint8_t relayIndex, bool state);
-void relay_toggle(uint8_t relayIndex);
 bool relay_getState(uint8_t relayIndex);
 void relay_addListener(RelayStateListener listener);

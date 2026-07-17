@@ -5,7 +5,7 @@ ESP32 firmware for controlling 4 relays via Bluetooth and MQTT.
 ## Features
 
 - BLE server with a read/write characteristic per relay
-- MQTT subscription for relay on/off/toggle commands, retained state publish
+- MQTT subscription for relay on/off commands, retained state publish
 - WiFi configuration portal using IotWebConf (Farsi captive portal), with a
   farm-owner name configurable through the portal
 - Relay state persisted across reboots (Preferences/NVS)
@@ -19,8 +19,8 @@ ESP32 firmware for controlling 4 relays via Bluetooth and MQTT.
 
 - `actuator/<farmOwner>/rl0N/on` -> turn relay N on (N = 1-4)
 - `actuator/<farmOwner>/rl0N/off` -> turn relay N off
-- `actuator/<farmOwner>/rl0N/toggle` -> toggle relay N
-- `actuator/<farmOwner>/rl0N/state` -> published (retained), payload `0` or `1`
+- `actuator/<farmOwner>/rl0N/state` -> published (retained), payload `1` (off) or `2` (on)
+- `actuator/<farmOwner>/online` -> device presence (retained); `2` = online (published on connect), `1` = offline (set by the broker via Last-Will on drop)
 
 ## BLE
 

@@ -5,8 +5,8 @@
     Relay MQTT topics (farmOwner is set via the captive portal):
       actuator/<farmOwner>/rl0N/on      -> turn relay N on
       actuator/<farmOwner>/rl0N/off     -> turn relay N off
-      actuator/<farmOwner>/rl0N/toggle  -> toggle relay N
-      actuator/<farmOwner>/rl0N/state   -> published (retained) on every change
+      actuator/<farmOwner>/rl0N/state   -> published (retained) on every change,
+                                           value 1 = off, 2 = on
 
     BLE: one service, one read/write characteristic per relay. Writing 0x01
     turns the relay ON, any other byte turns it OFF. Service/characteristic

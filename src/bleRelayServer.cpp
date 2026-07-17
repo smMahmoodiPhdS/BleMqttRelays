@@ -96,6 +96,12 @@ void setup_bleRelayServer() {
         relayCharacteristics[i] = characteristic;
     }
 
+    // TODO (BLE full control, planned): expose additional BLE characteristics so
+    // the board can be fully managed even when the MQTT broker is down —
+    // temperature/humidity limits, light schedules, and on/off thresholds. These
+    // must mirror the MQTT-side settings so the app's UI cards can drive either
+    // transport interchangeably (see reconciliation doc §4.2). Not yet implemented.
+
     relay_addListener(onRelayStateChanged);
 
     service->start();

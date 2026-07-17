@@ -55,11 +55,6 @@ void relay_setState(uint8_t relayIndex, bool state) {
     notifyListeners(relayIndex, state);
 }
 
-void relay_toggle(uint8_t relayIndex) {
-    if (relayIndex >= RELAY_COUNT) return;
-    relay_setState(relayIndex, !relayState[relayIndex]);
-}
-
 bool relay_getState(uint8_t relayIndex) {
     if (relayIndex >= RELAY_COUNT) return false;
     return relayState[relayIndex];
