@@ -22,6 +22,7 @@
 #include "mqttFunctions.h"
 #include "bleRelayServer.h"
 #include "otaUpdater.h"
+#include "heaterControl.h"
 
 #define WATCHDOG_TIMEOUT_S 30
 
@@ -43,6 +44,7 @@ void setup() {
     setup_mqtt();
     setup_bleRelayServer();
     setup_ota();
+    heaterControl_setup();
 
     Serial.println("Setup complete.");
 }
@@ -52,4 +54,5 @@ void loop() {
     loop_wifiManager();
     loop_mqtt();
     loop_ota();
+    heaterControl_loop();
 }

@@ -2,6 +2,7 @@
 #include "wifiManagerTools.h"
 #include "relayManager.h"
 #include "otaUpdater.h"
+#include "heaterControl.h"
 #include <WiFi.h>
 
 // TODO: set your MQTT broker host/port/credentials.
@@ -45,16 +46,29 @@ void mqtt_publishRelayState(uint8_t relayIndex, bool state) {
 static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String topicStr(topic);
 
-    // Debug: log every inbound MQTT message (topic + payload) on the serial
-    // monitor. Useful for verifying that the app's publishes actually reach the
-    // board — e.g. relay commands, and (with the sensor subscription below) the
-    // temperature limits sensors/<owner>/ts1/ll|ul.
     String rxMsg;
     for (unsigned int i = 0; i < length; i++) rxMsg += (char)payload[i];
-    Serial.print("[MQTT RX] ");
-    Serial.print(topicStr);
-    Serial.print(" = ");
-    Serial.println(rxMsg);
+
+    // Declutter the serial monitor: skip the high-frequency / self-echo topics
+    // (simulated current value, heater/cooler status we publish, daily stats).
+    // Keep limits (ll/ul) and relay commands visible.
+    bool noisy = topicStr.endsWith("/cu") || topicStr.endsWith("/hOn") ||
+                 topicStr.endsWith("/cOn") || topicStr.endsWith("/daily_min") ||
+                 topicStr.endsWith("/daily_max");
+    if (!noisy) {
+        Serial.print("[MQTT RX] ");
+        Serial.print(topicStr);
+        Serial.print(" = ");
+        Serial.println(rxMsg);
+    }
+
+    // Feed the heater/cooler control with temperature sensor 1 values.
+    {
+        String base = String("sensors/") + farmOwner + "/ts1/";
+        if (topicStr == base + "cu") { heaterControl_setCurrent(rxMsg.toFloat()); return; }
+        if (topicStr == base + "ll") { heaterControl_setLowerLimit(rxMsg.toFloat()); return; }
+        if (topicStr == base + "ul") { heaterControl_setUpperLimit(rxMsg.toFloat()); return; }
+    }
 
     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
         if (topicStr == relayTopic(i + 1, "on")) {
@@ -147,12 +161,9 @@ static void mqtt_simulateSensors() {
 
     String topic = String("sensors/") + farmOwner + "/ts1/cu";
     String payload = String(simTemp, 1);
-    // Non-retained, like a real live sensor reading.
+    // Non-retained, like a real live sensor reading. (No serial print — the sim
+    // is high-frequency and would congest the monitor.)
     mqttClient.publish(topic.c_str(), payload.c_str(), false);
-    Serial.print("[SIM TX] ");
-    Serial.print(topic);
-    Serial.print(" = ");
-    Serial.println(payload);
 }
 
 void loop_mqtt() {
