@@ -21,6 +21,11 @@ static const RoleConfig UNKNOWN_ROLE = {
 
 static RoleConfig currentRole = UNKNOWN_ROLE;
 
+// Print a 4-bit value as zero-padded binary, e.g. 2 -> "0010".
+static void printNibbleBin(uint8_t v) {
+    for (int b = 3; b >= 0; b--) Serial.print((v >> b) & 1);
+}
+
 void roleConfig_setup() {
     currentRole = UNKNOWN_ROLE;
     for (size_t i = 0; i < FUNCTION_TABLE_LEN; i++) {
@@ -30,17 +35,21 @@ void roleConfig_setup() {
         }
     }
     Serial.println("-------------------------------");
-    // Address readout (sw1).
+    // Address readout (sw1): decimal + 4-bit binary.
     Serial.print("Address  (sw1=");
     Serial.print(addressValue);
+    Serial.print(", b");
+    printNibbleBin(addressValue);
     Serial.print(") -> module #");
     Serial.print(roleConfig_address());
     Serial.print("  topic: ");
     Serial.print(currentRole.topicPrefix);
     Serial.println(roleConfig_address());
-    // Function readout (sw2).
+    // Function readout (sw2): decimal + 4-bit binary.
     Serial.print("Function (sw2=");
     Serial.print(functionValue);
+    Serial.print(", b");
+    printNibbleBin(functionValue);
     Serial.print(") -> ");
     Serial.print(currentRole.fnName);
     Serial.print("  | ");

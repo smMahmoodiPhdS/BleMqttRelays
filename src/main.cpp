@@ -38,7 +38,13 @@ void setup() {
     boardConfig_readDipSwitches();
     randomSeed(analogRead(boardPins.randomSeedPin));
     Serial.print("DIP raw value: ");
-    Serial.println(dipValue);
+    Serial.print(dipValue);
+    Serial.print(" = b");   // 8-bit binary, function nibble _ address nibble
+    for (int b = 7; b >= 0; b--) {
+        Serial.print((dipValue >> b) & 1);
+        if (b == 4) Serial.print('_');
+    }
+    Serial.println();
 
     // Decode the function switch into the board's role (prints address + function
     // with human-readable descriptions, wrapped in dashed separators).
