@@ -3,6 +3,7 @@
 #include "relayManager.h"
 #include "otaUpdater.h"
 #include "heaterControl.h"
+#include "roleConfig.h"
 #include <WiFi.h>
 
 // TODO: set your MQTT broker host/port/credentials.
@@ -10,7 +11,6 @@
 #define MQTT_PORT 1883
 #define MQTT_USER "viewers"
 #define MQTT_PASSWORD "1234zxcV@"
-//int res = iranMqttClient.connect(clientId.c_str(), "", "");
 
 // Broker-facing relay value convention. Grafana's traffic-light widget can't
 // key off 0, so relay values on the broker use 1 = OFF, 2 = ON. The firmware
@@ -26,20 +26,39 @@ PubSubClient mqttClient(wifiClient);
 
 static unsigned long lastReconnectAttempt = 0;
 
-static String relayTopic(uint8_t relayNumOneBased, const char* suffix) {
-    return "actuator/" + String(farmOwner) + "/rl0" + String(relayNumOneBased) + "/" + suffix;
+// ---- Addressed topics: actuator/<owner>/<prefix><A>/... --------------------
+// prefix (rmhc/rmlt/…) and address (1-based) come from the function+address
+// switches via roleConfig. So multiple modules on one farm never collide.
+static String moduleBase() {
+    const RoleConfig& r = roleConfig_get();
+    return "actuator/" + String(farmOwner) + "/" + r.topicPrefix +
+           String(roleConfig_address()) + "/";
 }
 
-// Device presence topic (retained). Uses the same traffic-light-friendly values
-// as relays: 2 = online, 1 = offline. The broker publishes "1" here via the
-// Last-Will when the device drops; the device publishes "2" right after connect.
+static String relayTopic(uint8_t relayNumOneBased, const char* suffix) {
+    return moduleBase() + "rl0" + String(relayNumOneBased) + "/" + suffix;
+}
+
+// Per-module presence (retained). 2 = online, 1 = offline (via Last-Will).
 static String presenceTopic() {
-    return "actuator/" + String(farmOwner) + "/online";
+    return moduleBase() + "online";
+}
+
+// Retained descriptor so the app/Node-RED can discover each module's role.
+static String functionTopic() {
+    const RoleConfig& r = roleConfig_get();
+    return "configs/" + String(farmOwner) + "/" + r.topicPrefix +
+           String(roleConfig_address()) + "/function";
+}
+
+// Paired sensor base for the current role (same-index). Heater/cooler follows
+// ts<A>; other roles will extend this (ls<A>/hs<A>/…) when implemented.
+static String pairedSensorBase() {
+    return "sensors/" + String(farmOwner) + "/ts" + String(roleConfig_address()) + "/";
 }
 
 void mqtt_publishRelayState(uint8_t relayIndex, bool state) {
     String topic = relayTopic(relayIndex + 1, "state");
-    // Convert internal bool -> broker value (1 = off, 2 = on).
     mqttClient.publish(topic.c_str(), state ? RELAY_MQTT_ON : RELAY_MQTT_OFF, true);
 }
 
@@ -49,9 +68,7 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String rxMsg;
     for (unsigned int i = 0; i < length; i++) rxMsg += (char)payload[i];
 
-    // Declutter the serial monitor: skip the high-frequency / self-echo topics
-    // (simulated current value, heater/cooler status we publish, daily stats).
-    // Keep limits (ll/ul) and relay commands visible.
+    // Declutter the serial monitor: skip high-frequency / self-echo topics.
     bool noisy = topicStr.endsWith("/cu") || topicStr.endsWith("/hOn") ||
                  topicStr.endsWith("/cOn") || topicStr.endsWith("/daily_min") ||
                  topicStr.endsWith("/daily_max");
@@ -62,29 +79,22 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
         Serial.println(rxMsg);
     }
 
-    // Feed the heater/cooler control with temperature sensor 1 values.
-    {
-        String base = String("sensors/") + farmOwner + "/ts1/";
+    // Feed heater/cooler control with the paired temperature sensor's values.
+    if (roleConfig_get().roleClass == ROLE_HEATER_COOLER) {
+        String base = pairedSensorBase();
         if (topicStr == base + "cu") { heaterControl_setCurrent(rxMsg.toFloat()); return; }
         if (topicStr == base + "ll") { heaterControl_setLowerLimit(rxMsg.toFloat()); return; }
         if (topicStr == base + "ul") { heaterControl_setUpperLimit(rxMsg.toFloat()); return; }
     }
 
+    // Relay commands (addressed) — same for every role.
     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
-        if (topicStr == relayTopic(i + 1, "on")) {
-            relay_setState(i, true);
-            return;
-        }
-        if (topicStr == relayTopic(i + 1, "off")) {
-            relay_setState(i, false);
-            return;
-        }
+        if (topicStr == relayTopic(i + 1, "on"))  { relay_setState(i, true);  return; }
+        if (topicStr == relayTopic(i + 1, "off")) { relay_setState(i, false); return; }
     }
 
     if (topicStr == ota_versionTopic()) {
-        String versionMsg;
-        for (unsigned int i = 0; i < length; i++) versionMsg += (char)payload[i];
-        ota_setRemoteVersion(versionMsg);
+        ota_setRemoteVersion(rxMsg);
     }
 }
 
@@ -98,37 +108,33 @@ static bool mqtt_reconnect() {
     if (mqttClient.connected()) return true;
     if (WiFi.status() != WL_CONNECTED) return false;
 
-    String clientId = String("BleMqttRelay-") + farmOwner + "-" + String(random(0xffff), HEX);
+    String clientId = String("BleMqttRelay-") + farmOwner + "-" +
+                      roleConfig_get().topicPrefix + String(roleConfig_address()) +
+                      "-" + String(random(0xffff), HEX);
     String willTopic = presenceTopic();
-    // Last-Will: if the device drops, the broker retains "1" (offline) here.
-    // Args: clientId, user, pass, willTopic, willQoS, willRetain, willMessage.
+    // Last-Will: if the module drops, the broker retains "1" (offline) here.
     if (!mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD,
                             willTopic.c_str(), 0, true, "1")) return false;
 
-    // Announce presence (retained "2" = online) now that we're connected.
+    // Presence (retained "2" = online) + role descriptor.
     mqttClient.publish(willTopic.c_str(), "2", true);
+    mqttClient.publish(functionTopic().c_str(), roleConfig_get().fnName, true);
 
+    // Relay commands (addressed).
     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
         mqttClient.subscribe(relayTopic(i + 1, "on").c_str());
         mqttClient.subscribe(relayTopic(i + 1, "off").c_str());
     }
     mqttClient.subscribe(ota_versionTopic().c_str());
 
-    // --- Groundwork for on-board heater/cooler control (see reconciliation doc,
-    // "Heater/cooler control" section) ---
-    // The relay firmware historically did NOT subscribe to the sensor stream, so
-    // the app's sensors/<owner>/ts1/ll|ul limit updates never reached the board.
-    // Subscribe to temperature sensor 1 so those values arrive and show up on the
-    // serial monitor. For now they are only logged (by mqttCallback); the
-    // hysteresis heater/cooler logic from the original multiActuator firmware is
-    // still to be ported. Covers ts1/cu, ts1/ll, ts1/ul.
-    {
-        String tsTopic = String("sensors/") + farmOwner + "/ts1/#";
+    // Heater/cooler role: subscribe to its paired temperature sensor stream
+    // (cu/ll/ul) so the control loop and app limit updates reach the board.
+    if (roleConfig_get().roleClass == ROLE_HEATER_COOLER) {
+        String tsTopic = pairedSensorBase() + "#";
         mqttClient.subscribe(tsTopic.c_str());
     }
 
-    // Republish current state on every (re)connect so a broker/dashboard that
-    // just restarted still gets it, even though it's also retained.
+    // Republish current relay state on every (re)connect.
     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
         mqtt_publishRelayState(i, relay_getState(i));
     }
@@ -136,18 +142,17 @@ static bool mqtt_reconnect() {
 }
 
 // --- TEMPORARY sensor simulator (bench testing) -----------------------------
-// The relay firmware publishes no sensor data, so nothing emits ts1/cu — and the
-// app only shows a temperature card once a *current value* arrives (it gates the
-// card on updateMillis, which is set only by ts1/cu). This publishes a fake
-// current temperature to sensors/<owner>/ts1/cu so the card appears and the
-// full loop (card -> +/- -> ll/ul back to the board) can be exercised without
-// the real on-farm sensor board. Set SIMULATE_TS1 = false to disable.
+// Publishes a fake current temperature to the board's paired sensor
+// (sensors/<owner>/ts<A>/cu) so the app card appears and the heater/cooler loop
+// can be exercised without the real sensor board. Only meaningful for the
+// heater/cooler role. Set SIMULATE_TS1 = false to disable.
 static const bool SIMULATE_TS1 = true;
 static const unsigned long SIM_INTERVAL_MS = 5000;
 static unsigned long lastSimMs = 0;
 
 static void mqtt_simulateSensors() {
     if (!SIMULATE_TS1) return;
+    if (roleConfig_get().roleClass != ROLE_HEATER_COOLER) return;
     unsigned long now = millis();
     if (now - lastSimMs < SIM_INTERVAL_MS) return;
     lastSimMs = now;
@@ -159,10 +164,8 @@ static void mqtt_simulateSensors() {
     if (simTemp >= 30.0f) { simTemp = 30.0f; simDir = -0.5f; }
     if (simTemp <= 24.0f) { simTemp = 24.0f; simDir = 0.5f; }
 
-    String topic = String("sensors/") + farmOwner + "/ts1/cu";
+    String topic = pairedSensorBase() + "cu";
     String payload = String(simTemp, 1);
-    // Non-retained, like a real live sensor reading. (No serial print — the sim
-    // is high-frequency and would congest the monitor.)
     mqttClient.publish(topic.c_str(), payload.c_str(), false);
 }
 

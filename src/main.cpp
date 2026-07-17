@@ -23,6 +23,7 @@
 #include "bleRelayServer.h"
 #include "otaUpdater.h"
 #include "heaterControl.h"
+#include "roleConfig.h"
 
 #define WATCHDOG_TIMEOUT_S 30
 
@@ -37,7 +38,15 @@ void setup() {
     boardConfig_readDipSwitches();
     randomSeed(analogRead(boardPins.randomSeedPin));
     Serial.print("DIP value: ");
-    Serial.println(dipValue);
+    Serial.print(dipValue);
+    Serial.print("  (address sw1=");
+    Serial.print(addressValue);
+    Serial.print(", function sw2=");
+    Serial.print(functionValue);
+    Serial.println(")");
+
+    // Decode the function switch into the board's role (prefix, relay map, …).
+    roleConfig_setup();
 
     setup_relays();
     setup_wifiManager();

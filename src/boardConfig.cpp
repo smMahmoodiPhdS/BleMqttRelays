@@ -37,6 +37,8 @@ const HardwarePins boardPins = {
 };
 
 uint8_t dipValue = 0;
+uint8_t addressValue = 0;
+uint8_t functionValue = 0;
 
 void boardConfig_readDipSwitches() {
     dipValue = 0;
@@ -49,4 +51,8 @@ void boardConfig_readDipSwitches() {
             dipValue |= (1 << i);
         }
     }
+    // Split into the address switch (sw1, low nibble) and function switch
+    // (sw2, high nibble).
+    addressValue = dipValue & 0x0F;
+    functionValue = (dipValue >> 4) & 0x0F;
 }

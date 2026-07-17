@@ -2,12 +2,8 @@
 #include "relayManager.h"
 #include "mqttFunctions.h"
 #include "wifiManagerTools.h"
+#include "roleConfig.h"
 #include <Arduino.h>
-
-// FN_ICH_H12C34 relay mapping (0-based indices): heaters = rl01,rl02 (0,1);
-// coolers = rl03,rl04 (2,3).
-static const uint8_t HEATER_RELAYS[] = {0, 1};
-static const uint8_t COOLER_RELAYS[] = {2, 3};
 
 // Hysteresis margin around the limits (deg C) to avoid chattering at the edge.
 static const float TEMP_HYSTERESIS_C = 0.3f;
@@ -41,24 +37,44 @@ void heaterControl_setCurrent(float value)    { curTemp = value; hasCurrent = tr
 void heaterControl_setLowerLimit(float value) { lowerLimit = value; gotLower = true; }
 void heaterControl_setUpperLimit(float value) { upperLimit = value; gotUpper = true; }
 
-static void publishStatus() {
-    String base = String("sensors/") + farmOwner + "/ts1/";
-    String hTopic = base + "hOn";
-    String cTopic = base + "cOn";
-    mqttClient.publish(hTopic.c_str(), isHeaterOn ? "2" : "1", true);
-    mqttClient.publish(cTopic.c_str(), isCoolerOn ? "2" : "1", true);
+// Paired temperature sensor (same-index): sensors/<owner>/ts<A>/…
+static String pairedTsBase() {
+    return "sensors/" + String(farmOwner) + "/ts" + String(roleConfig_address()) + "/";
 }
 
+static void publishStatus() {
+    String base = pairedTsBase();
+    mqttClient.publish((base + "hOn").c_str(), isHeaterOn ? "2" : "1", true);
+    mqttClient.publish((base + "cOn").c_str(), isCoolerOn ? "2" : "1", true);
+}
+
+// Drive relays per the function-variant map (H1234 / C1234 / H12C34 / H34C12):
+// each relay is a heater or a cooler (or unused) as defined by roleConfig.
 static void applyRelays() {
-    for (uint8_t i = 0; i < 2; i++) relay_setState(HEATER_RELAYS[i], isHeaterOn);
-    for (uint8_t i = 0; i < 2; i++) relay_setState(COOLER_RELAYS[i], isCoolerOn);
+    const RoleConfig& r = roleConfig_get();
+    for (uint8_t i = 0; i < RELAY_COUNT; i++) {
+        switch (r.relayFunc[i]) {
+            case RF_HEATER: relay_setState(i, isHeaterOn); break;
+            case RF_COOLER: relay_setState(i, isCoolerOn); break;
+            default: break;  // unused / non-thermal relays untouched
+        }
+    }
 }
 
 void heaterControl_setup() {
-    Serial.println("HeaterControl (FN_ICH_H12C34) ready: rl01/rl02=Heater, rl03/rl04=Cooler.");
+    if (roleConfig_get().roleClass == ROLE_HEATER_COOLER) {
+        Serial.print("HeaterControl ready (");
+        Serial.print(roleConfig_get().fnName);
+        Serial.print(", follows ");
+        Serial.print(pairedTsBase());
+        Serial.println(").");
+    }
 }
 
 void heaterControl_loop() {
+    // Only the heater/cooler role runs this control.
+    if (roleConfig_get().roleClass != ROLE_HEATER_COOLER) return;
+
     // Need at least one current reading and both limits before controlling.
     if (!hasCurrent || !gotLower || !gotUpper) return;
 
@@ -75,12 +91,10 @@ void heaterControl_loop() {
     if (isHeaterOn) {
         bool ranLongEnough = (now - heaterOnSince) >= MIN_HEATER_ON_MS;
         bool minCoolerOffMet = (now - coolerOffSince) >= MIN_COOLER_OFF_MS;
-        // Stop heating once back inside the band and min on-time is satisfied.
         if (ranLongEnough && curTemp >= (lowerLimit + TEMP_HYSTERESIS_C)) {
             isHeaterOn = false;
             heaterOffSince = now;
         }
-        // Switch to cooling only after heater min-on and cooler min-off.
         if (isHeaterOn && ranLongEnough && wantCool && minCoolerOffMet) {
             isHeaterOn = false;
             heaterOffSince = now;
@@ -101,7 +115,6 @@ void heaterControl_loop() {
             heaterOnSince = now;
         }
     } else {
-        // Both OFF — decide whether to start one (respect min-off timers).
         if (wantHeat && (now - heaterOffSince) >= MIN_HEATER_OFF_MS) {
             isHeaterOn = true;
             heaterOnSince = now;
