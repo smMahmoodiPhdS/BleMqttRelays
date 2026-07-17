@@ -4,7 +4,10 @@ DNSServer dnsServer;
 WebServer server(80);
 IotWebConf iotWebConf(DEVICE_NAME_PREFIX, &dnsServer, &server, WIFI_AP_PASSWORD);
 
-char farmOwner[128] = "NONE";
+// Default identity. Kept as "demo" so a freshly-flashed device joins the same
+// default namespace the mobile app uses out of the box (default auth "demo"):
+// actuator/demo/rl0N/... — set the real farm owner via the captive portal.
+char farmOwner[128] = "demo";
 IotWebConfTextParameter farmOwnerParam =
     IotWebConfTextParameter("نام مزرعه / مشتری", "farmOwner", farmOwner, sizeof(farmOwner));
 
