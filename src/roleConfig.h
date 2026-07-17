@@ -28,6 +28,7 @@ struct RoleConfig {
     RoleClass   roleClass;
     const char* fnName;          // e.g. "FN_ICH_H12C34" (published as descriptor)
     const char* topicPrefix;     // e.g. "rmhc"
+    const char* desc;            // short human-readable description for the log
     RelayFunc   relayFunc[4];    // per-relay role
 };
 

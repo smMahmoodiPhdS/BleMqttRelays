@@ -37,15 +37,11 @@ void setup() {
 
     boardConfig_readDipSwitches();
     randomSeed(analogRead(boardPins.randomSeedPin));
-    Serial.print("DIP value: ");
-    Serial.print(dipValue);
-    Serial.print("  (address sw1=");
-    Serial.print(addressValue);
-    Serial.print(", function sw2=");
-    Serial.print(functionValue);
-    Serial.println(")");
+    Serial.print("DIP raw value: ");
+    Serial.println(dipValue);
 
-    // Decode the function switch into the board's role (prefix, relay map, …).
+    // Decode the function switch into the board's role (prints address + function
+    // with human-readable descriptions, wrapped in dashed separators).
     roleConfig_setup();
 
     setup_relays();
