@@ -1,109 +1,55 @@
+/*
+    ESP32 firmware for a 4-relay controller, reachable over BLE and MQTT,
+    with WiFi provisioning via a captive portal (IotWebConf).
+
+    Relay MQTT topics (farmOwner is set via the captive portal):
+      actuator/<farmOwner>/rl0N/on      -> turn relay N on
+      actuator/<farmOwner>/rl0N/off     -> turn relay N off
+      actuator/<farmOwner>/rl0N/toggle  -> toggle relay N
+      actuator/<farmOwner>/rl0N/state   -> published (retained) on every change
+
+    BLE: one service, one read/write characteristic per relay. Writing 0x01
+    turns the relay ON, any other byte turns it OFF. Service/characteristic
+    UUIDs are derived from farmOwner + the DIP switch value so multiple
+    boards don't collide.
+*/
+
 #include <Arduino.h>
-#include <WiFi.h>
-#include <PubSubClient.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+#include <esp_task_wdt.h>
+#include "boardConfig.h"
+#include "relayManager.h"
 #include "wifiManagerTools.h"
+#include "mqttFunctions.h"
+#include "bleRelayServer.h"
+#include "otaUpdater.h"
 
-#define RELAY_COUNT 4
-const int relayPins[RELAY_COUNT] = {16, 17, 18, 19};
-
-const char* mqttServer = "192.168.1.100";
-const int mqttPort = 1883;
-const char* mqttUser = "viewers";
-const char* mqttPassword = "1234zxcV@";
-
-BLEServer* pServer = nullptr;
-BLECharacteristic* pCommandCharacteristic = nullptr;
-
-WiFiClient wifiClient;
-PubSubClient mqttClient(wifiClient);
-
-void handleRelayCommand(const String& command);
-
-class RelayCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pCharacteristic) override {
-    std::string value = pCharacteristic->getValue();
-    if (value.length() > 0) {
-      handleRelayCommand(String(value.c_str()));
-    }
-  }
-};
-
-void connectMqtt() {
-  if (!mqttClient.connected()) {
-    String clientId = "BleMqttRelays-" + String(WiFi.macAddress());
-    if (mqttClient.connect(clientId.c_str(), mqttUser, mqttPassword)) {
-      mqttClient.subscribe("blemqtt/relays/+/set");
-      mqttClient.subscribe("blemqtt/relays/+/toggle");
-    }
-  }
-}
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String message;
-  for (unsigned int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  handleRelayCommand(String(topic) + ":" + message);
-}
-
-void handleRelayCommand(const String& command) {
-  // Format: "blemqtt/relays/N/set:1" or "blemqtt/relays/N/toggle:"
-  int indexStart = command.indexOf("relays/");
-  if (indexStart < 0) return;
-  int relayIndex = command.substring(indexStart + 7).toInt();
-  if (relayIndex < 0 || relayIndex >= RELAY_COUNT) return;
-
-  if (command.indexOf("/set:") >= 0) {
-    bool state = command.endsWith("1");
-    digitalWrite(relayPins[relayIndex], state ? HIGH : LOW);
-  } else if (command.indexOf("/toggle:") >= 0) {
-    digitalWrite(relayPins[relayIndex], !digitalRead(relayPins[relayIndex]));
-  }
-
-  String stateTopic = String("blemqtt/relays/") + relayIndex + "/state";
-  mqttClient.publish(stateTopic.c_str(), digitalRead(relayPins[relayIndex]) ? "1" : "0", true);
-}
-
-void setupBle() {
-  BLEDevice::init("BleMqttRelays");
-  pServer = BLEDevice::createServer();
-  BLEService* pService = pServer->createService("4fafc201-1fb5-459e-8fcc-c00000000000");
-
-  pCommandCharacteristic = pService->createCharacteristic(
-      "beb5483e-36e1-4688-b7f5-ea07361b26a8",
-      BLECharacteristic::PROPERTY_WRITE
-  );
-  pCommandCharacteristic->setCallbacks(new RelayCallbacks());
-  pCommandCharacteristic->addDescriptor(new BLE2902());
-
-  pService->start();
-  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID("4fafc201-1fb5-459e-8fcc-c00000000000");
-  pAdvertising->start();
-}
+#define WATCHDOG_TIMEOUT_S 30
 
 void setup() {
-  Serial.begin(115200);
-  for (int i = 0; i < RELAY_COUNT; i++) {
-    pinMode(relayPins[i], OUTPUT);
-    digitalWrite(relayPins[i], LOW);
-  }
+    Serial.begin(115200);
+    delay(200);
+    Serial.println("\n------------ BleMqttRelays booting -------------\n");
 
-  setup_wifiManager();
-  mqttClient.setServer(mqttServer, mqttPort);
-  mqttClient.setCallback(mqttCallback);
-  setupBle();
+    esp_task_wdt_init(WATCHDOG_TIMEOUT_S, true);
+    esp_task_wdt_add(NULL);
+
+    boardConfig_readDipSwitches();
+    randomSeed(analogRead(boardPins.randomSeedPin));
+    Serial.print("DIP value: ");
+    Serial.println(dipValue);
+
+    setup_relays();
+    setup_wifiManager();
+    setup_mqtt();
+    setup_bleRelayServer();
+    setup_ota();
+
+    Serial.println("Setup complete.");
 }
 
 void loop() {
-  loop_wifiManager();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    connectMqtt();
-    mqttClient.loop();
-  }
+    esp_task_wdt_reset();
+    loop_wifiManager();
+    loop_mqtt();
+    loop_ota();
 }

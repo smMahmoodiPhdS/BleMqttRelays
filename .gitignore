@@ -5,3 +5,4 @@ libdeps/
 *.env
 build/
 .DS_Store
+.claude/

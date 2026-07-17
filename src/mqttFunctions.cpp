@@ -1,0 +1,91 @@
+#include "mqttFunctions.h"
+#include "wifiManagerTools.h"
+#include "relayManager.h"
+#include "otaUpdater.h"
+#include <WiFi.h>
+
+// TODO: set your MQTT broker host/port/credentials.
+#define MQTT_SERVER "87.107.165.201"
+#define MQTT_PORT 1883
+#define MQTT_USER "viewers"
+#define MQTT_PASSWORD "1234zxcV@"
+//int res = iranMqttClient.connect(clientId.c_str(), "", "");
+
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+
+static unsigned long lastReconnectAttempt = 0;
+
+static String relayTopic(uint8_t relayNumOneBased, const char* suffix) {
+    return "actuator/" + String(farmOwner) + "/rl0" + String(relayNumOneBased) + "/" + suffix;
+}
+
+void mqtt_publishRelayState(uint8_t relayIndex, bool state) {
+    String topic = relayTopic(relayIndex + 1, "state");
+    mqttClient.publish(topic.c_str(), state ? "1" : "0", true);
+}
+
+static void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    String topicStr(topic);
+
+    for (uint8_t i = 0; i < RELAY_COUNT; i++) {
+        if (topicStr == relayTopic(i + 1, "on")) {
+            relay_setState(i, true);
+            return;
+        }
+        if (topicStr == relayTopic(i + 1, "off")) {
+            relay_setState(i, false);
+            return;
+        }
+        if (topicStr == relayTopic(i + 1, "toggle")) {
+            relay_toggle(i);
+            return;
+        }
+    }
+
+    if (topicStr == ota_versionTopic()) {
+        String versionMsg;
+        for (unsigned int i = 0; i < length; i++) versionMsg += (char)payload[i];
+        ota_setRemoteVersion(versionMsg);
+    }
+}
+
+void setup_mqtt() {
+    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+    mqttClient.setCallback(mqttCallback);
+    relay_addListener(mqtt_publishRelayState);
+}
+
+static bool mqtt_reconnect() {
+    if (mqttClient.connected()) return true;
+    if (WiFi.status() != WL_CONNECTED) return false;
+
+    String clientId = String("BleMqttRelay-") + farmOwner + "-" + String(random(0xffff), HEX);
+    if (!mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) return false;
+
+    for (uint8_t i = 0; i < RELAY_COUNT; i++) {
+        mqttClient.subscribe(relayTopic(i + 1, "on").c_str());
+        mqttClient.subscribe(relayTopic(i + 1, "off").c_str());
+        mqttClient.subscribe(relayTopic(i + 1, "toggle").c_str());
+    }
+    mqttClient.subscribe(ota_versionTopic().c_str());
+
+    // Republish current state on every (re)connect so a broker/dashboard that
+    // just restarted still gets it, even though it's also retained.
+    for (uint8_t i = 0; i < RELAY_COUNT; i++) {
+        mqtt_publishRelayState(i, relay_getState(i));
+    }
+    return true;
+}
+
+void loop_mqtt() {
+    if (!mqttClient.connected()) {
+        unsigned long now = millis();
+        if (now - lastReconnectAttempt >= MQTT_RECONNECT_INTERVAL_MS) {
+            lastReconnectAttempt = now;
+            mqtt_reconnect();
+        }
+        return;
+    }
+    mqttClient.loop();
+}
