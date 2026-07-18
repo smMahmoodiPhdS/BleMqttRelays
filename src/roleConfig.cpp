@@ -1,15 +1,18 @@
 #include "roleConfig.h"
 #include "boardConfig.h"
 
-// Locked starter function table (Addressing doc §2.3). Index by sw2 value.
-// Humidity (8..11) and water (12..15) maps are still TBD — reserved here.
+// Locked function table (Addressing doc §2.3). Index by sw2 value.
+//   0-3  heater/cooler (rmhc)   4-5 light (rmlt)   8 humidity (rmhu)
+//   12   versatile/mixed (rmmx)   others reserved.
 static const RoleConfig FUNCTION_TABLE[] = {
-    {0, ROLE_HEATER_COOLER, "FN_ICH_H1234",  "rmhc", "Heater/Cooler: all 4 relays HEAT",              {RF_HEATER, RF_HEATER, RF_HEATER, RF_HEATER}},
-    {1, ROLE_HEATER_COOLER, "FN_ICH_C1234",  "rmhc", "Heater/Cooler: all 4 relays COOL",              {RF_COOLER, RF_COOLER, RF_COOLER, RF_COOLER}},
-    {2, ROLE_HEATER_COOLER, "FN_ICH_H12C34", "rmhc", "Heater/Cooler: rl1,2 HEAT  rl3,4 COOL",         {RF_HEATER, RF_HEATER, RF_COOLER, RF_COOLER}},
-    {3, ROLE_HEATER_COOLER, "FN_ICH_H34C12", "rmhc", "Heater/Cooler: rl3,4 HEAT  rl1,2 COOL",         {RF_COOLER, RF_COOLER, RF_HEATER, RF_HEATER}},
-    {4, ROLE_LIGHT,         "FN_ICL_SSSS",   "rmlt", "Light: all 4 relays SALOON",                    {RF_LIGHT_SALOON, RF_LIGHT_SALOON, RF_LIGHT_SALOON, RF_LIGHT_SALOON}},
-    {5, ROLE_LIGHT,         "FN_ICL_SSPM",   "rmlt", "Light: saloon,saloon,peripheral,manager",       {RF_LIGHT_SALOON, RF_LIGHT_SALOON, RF_LIGHT_PERIPHERAL, RF_LIGHT_MANAGER}},
+    {0,  ROLE_HEATER_COOLER, "FN_HTC_H1234",  "rmhc", "Heater/Cooler: all 4 relays HEAT",        {RF_HEATER, RF_HEATER, RF_HEATER, RF_HEATER}},
+    {1,  ROLE_HEATER_COOLER, "FN_HTC_C1234",  "rmhc", "Heater/Cooler: all 4 relays COOL",        {RF_COOLER, RF_COOLER, RF_COOLER, RF_COOLER}},
+    {2,  ROLE_HEATER_COOLER, "FN_HTC_H12C34", "rmhc", "Heater/Cooler: rl1,2 HEAT  rl3,4 COOL",   {RF_HEATER, RF_HEATER, RF_COOLER, RF_COOLER}},
+    {3,  ROLE_HEATER_COOLER, "FN_HTC_H34C12", "rmhc", "Heater/Cooler: rl3,4 HEAT  rl1,2 COOL",   {RF_COOLER, RF_COOLER, RF_HEATER, RF_HEATER}},
+    {4,  ROLE_LIGHT,         "FN_LGT_SSSS",   "rmlt", "Light: all 4 relays SALOON",              {RF_LIGHT_SALOON, RF_LIGHT_SALOON, RF_LIGHT_SALOON, RF_LIGHT_SALOON}},
+    {5,  ROLE_LIGHT,         "FN_LGT_SSPM",   "rmlt", "Light: saloon,saloon,peripheral,manager", {RF_LIGHT_SALOON, RF_LIGHT_SALOON, RF_LIGHT_PERIPHERAL, RF_LIGHT_MANAGER}},
+    {8,  ROLE_HUMIDITY,      "FN_HUM_SSSS",   "rmhu", "Humidity: all 4 relays HUMIDIFY",         {RF_HUMIDIFIER, RF_HUMIDIFIER, RF_HUMIDIFIER, RF_HUMIDIFIER}},
+    {12, ROLE_MIXED,         "FN_MIX_HuLgCoHt","rmmx","Versatile: rl1 Humid, rl2 Light, rl3 Cool, rl4 Heat", {RF_HUMIDIFIER, RF_LIGHT_SALOON, RF_COOLER, RF_HEATER}},
 };
 static const size_t FUNCTION_TABLE_LEN = sizeof(FUNCTION_TABLE) / sizeof(FUNCTION_TABLE[0]);
 
@@ -34,6 +37,7 @@ void roleConfig_setup() {
             break;
         }
     }
+
     Serial.println("-------------------------------");
     // Address readout (sw1): decimal + 4-bit binary.
     Serial.print("Address  (sw1=");
@@ -63,4 +67,27 @@ const RoleConfig& roleConfig_get() {
 
 uint8_t roleConfig_address() {
     return addressValue + 1;  // 1-based topic index
+}
+
+bool roleUsesTemperature() {
+    for (uint8_t i = 0; i < 4; i++) {
+        RelayFunc f = currentRole.relayFunc[i];
+        if (f == RF_HEATER || f == RF_COOLER) return true;
+    }
+    return false;
+}
+
+bool roleUsesHumidity() {
+    for (uint8_t i = 0; i < 4; i++) {
+        if (currentRole.relayFunc[i] == RF_HUMIDIFIER) return true;
+    }
+    return false;
+}
+
+bool roleUsesLight() {
+    for (uint8_t i = 0; i < 4; i++) {
+        RelayFunc f = currentRole.relayFunc[i];
+        if (f == RF_LIGHT_SALOON || f == RF_LIGHT_PERIPHERAL || f == RF_LIGHT_MANAGER) return true;
+    }
+    return false;
 }

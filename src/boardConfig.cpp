@@ -25,14 +25,10 @@
 //     .pin_ENC_D_SW = 23
 // };
 
-// Updated pin assignment to match user hardware:
-// Relay 1 -> GPIO 2
-// Relay 2 -> GPIO 4
-// Relay 3 -> GPIO 15
-// Relay 4 -> GPIO 16
+
 const HardwarePins boardPins = {
     .relayPin = {15, 2, 4, 16},
-    .dipPin = {5, 26, 25, 33, 27, 14, 12, 13},
+    .dipPin = {5, 26, 25, 33, 39, 34, 35, 32},
     .randomSeedPin = 36,
 };
 

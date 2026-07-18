@@ -22,8 +22,8 @@
 #include "mqttFunctions.h"
 #include "bleRelayServer.h"
 #include "otaUpdater.h"
-#include "heaterControl.h"
 #include "roleConfig.h"
+#include "roleManager.h"
 
 #define WATCHDOG_TIMEOUT_S 30
 
@@ -55,7 +55,7 @@ void setup() {
     setup_mqtt();
     setup_bleRelayServer();
     setup_ota();
-    heaterControl_setup();
+    roleManager_setup();   // selects + sets up the role from the function switch
 
     Serial.println("Setup complete.");
 }
@@ -65,5 +65,5 @@ void loop() {
     loop_wifiManager();
     loop_mqtt();
     loop_ota();
-    heaterControl_loop();
+    roleManager_loop();
 }

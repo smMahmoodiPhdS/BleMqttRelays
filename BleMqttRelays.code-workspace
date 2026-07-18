@@ -2,9 +2,7 @@
 	"folders": [
 		{
 			"path": "."
-		},
-		{
-			"path": "../../referenceOrRawData/multiAcutator"
 		}
-	]
+	],
+	"settings": {}
 }
