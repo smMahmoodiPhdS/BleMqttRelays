@@ -21,7 +21,12 @@
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
+// Re-assert the retained relay topics on a slow cadence so a stale retained
+// value can never outlive reality.
+#define RELAY_STATE_HEARTBEAT_MS 60000UL
+
 static unsigned long lastReconnectAttempt = 0;
+static unsigned long lastRelayHeartbeat = 0;
 
 // ---- Addressed topics: <prefix><A> from the function/address switches --------
 static String moduleBase() {
@@ -46,9 +51,19 @@ static String sensorBase(const char* sensorType) {
            String(roleConfig_address()) + "/";
 }
 
-void mqtt_publishRelayState(uint8_t relayIndex, bool state) {
-    String topic = relayTopic(relayIndex + 1, "state");
-    mqttClient.publish(topic.c_str(), state ? RELAY_MQTT_ON : RELAY_MQTT_OFF, true);
+// `state` now carries the *measured* coil state from the feedback divider, not
+// the commanded one, so Grafana and the app show what the relay is really doing
+// even when the on-board slider is driving it. The commanded value moved to
+// `cmd`, and `mode` says whether the two agree.
+void mqtt_publishRelayStatus(uint8_t relayIndex, const RelayStatus& status) {
+    if (!mqttClient.connected()) return;
+    uint8_t n = relayIndex + 1;
+    mqttClient.publish(relayTopic(n, "state").c_str(),
+                       status.actual ? RELAY_MQTT_ON : RELAY_MQTT_OFF, true);
+    mqttClient.publish(relayTopic(n, "cmd").c_str(),
+                       status.commanded ? RELAY_MQTT_ON : RELAY_MQTT_OFF, true);
+    mqttClient.publish(relayTopic(n, "mode").c_str(),
+                       relay_modeName(status.mode), true);
 }
 
 void mqtt_publishSensorStatus(const char* sensorType, const char* field, bool on) {
@@ -110,7 +125,7 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 void setup_mqtt() {
     mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
     mqttClient.setCallback(mqttCallback);
-    relay_addListener(mqtt_publishRelayState);
+    relay_addListener(mqtt_publishRelayStatus);
 }
 
 static bool mqtt_reconnect() {
@@ -142,9 +157,8 @@ static bool mqtt_reconnect() {
 
     // Let the role publish its initial status, then republish relay states.
     roleManager_onConnect();
-    for (uint8_t i = 0; i < RELAY_COUNT; i++) {
-        mqtt_publishRelayState(i, relay_getState(i));
-    }
+    relay_republishAll();
+    lastRelayHeartbeat = millis();
     return true;
 }
 
@@ -158,5 +172,16 @@ void loop_mqtt() {
         return;
     }
     mqttClient.loop();
+
+    // The relay topics are retained, so a broker restart or a publish lost
+    // during a flaky link would leave a stale value sitting there claiming a
+    // heater is on. Re-assert the truth periodically - it is three small
+    // retained publishes per channel per minute.
+    unsigned long now = millis();
+    if (now - lastRelayHeartbeat >= RELAY_STATE_HEARTBEAT_MS) {
+        lastRelayHeartbeat = now;
+        relay_republishAll();
+    }
+
     sensorSim_loop();
 }

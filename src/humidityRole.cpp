@@ -29,16 +29,24 @@ void HumidityRole::loop() {
         Serial.print("[CTRL] hs");
         Serial.print(roleConfig_address());
         Serial.print(" -> Humidifier ");
-        Serial.println(_humidifier.isOn() ? "ON" : "OFF");
-        publishStatus();
+        Serial.print(_humidifier.isOn() ? "ON" : "OFF");
+        if (_humidifier.isOverridden()) Serial.print("  (WARNING: not following commands)");
+        Serial.println();
     }
+    publishStatus();   // self-guarding; also catches slider-driven changes
 }
 
 void HumidityRole::onConnect() {
+    _havePublished = false;
     publishStatus();
 }
 
 void HumidityRole::publishStatus() {
     // hs<A>/hOn = humidifier status (the humidity card already reads it).
-    mqtt_publishSensorStatus("hs", "hOn", _humidifier.isOn());
+    // Measured, not intended - see the note in heaterCoolerRole.cpp.
+    bool on = _humidifier.isActuallyOn();
+    if (_havePublished && on == _lastPub) return;
+    mqtt_publishSensorStatus("hs", "hOn", on);
+    _lastPub = on;
+    _havePublished = true;
 }

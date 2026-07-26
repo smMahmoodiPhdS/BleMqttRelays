@@ -57,17 +57,28 @@ void MixedRole::loop() {
             Serial.print("/");
             Serial.print(s.statusField);
             Serial.print(") -> ");
-            Serial.println(s.ctrl.isOn() ? "ON" : "OFF");
-            publishSlot(i);
+            Serial.print(s.ctrl.isOn() ? "ON" : "OFF");
+            if (s.ctrl.isOverridden()) Serial.print("  (WARNING: not following commands)");
+            Serial.println();
         }
+        publishSlot(i);   // self-guarding; also catches slider-driven changes
     }
 }
 
 void MixedRole::onConnect() {
-    for (uint8_t i = 0; i < 4; i++) if (_slots[i].active) publishSlot(i);
+    for (uint8_t i = 0; i < 4; i++) {
+        if (!_slots[i].active) continue;
+        _slots[i].havePublished = false;
+        publishSlot(i);
+    }
 }
 
 void MixedRole::publishSlot(uint8_t i) {
     Slot& s = _slots[i];
-    mqtt_publishSensorStatus(s.sensorType, s.statusField, s.ctrl.isOn());
+    // Measured, not intended - see the note in heaterCoolerRole.cpp.
+    bool on = s.ctrl.isActuallyOn();
+    if (s.havePublished && on == s.lastPub) return;
+    mqtt_publishSensorStatus(s.sensorType, s.statusField, on);
+    s.lastPub = on;
+    s.havePublished = true;
 }

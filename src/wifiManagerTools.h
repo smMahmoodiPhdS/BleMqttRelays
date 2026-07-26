@@ -6,7 +6,20 @@
 #include <IotWebConfUsing.h>
 
 #define WIFI_AP_PASSWORD "12345678"
-#define DEVICE_NAME_PREFIX "BleMqttRelay"
+
+// BLE advertised name prefix. Short and neutral on purpose:
+//
+//   * Byte budget. The advertised name lives in the 31-octet SCAN_RSP packet,
+//     minus 2 bytes of AD overhead = 29 characters total. "BleMqttRelay-" ate
+//     13 of them; "ASN-" costs 4, leaving 25. See the arithmetic in
+//     Docs/Architecture/Namespace-Cutover-Readiness.md §2.4 — and note that 25
+//     still does not satisfy the no-truncation rule, so the full identity has
+//     to move to a GATT characteristic regardless. This is headroom, not a fix.
+//
+//   * Disclosure. "BleMqttRelay" told anyone within radio range exactly which
+//     protocol stack and device class they were looking at, which is free
+//     reconnaissance. A neutral token does not.
+#define DEVICE_NAME_PREFIX "ASN"
 
 extern DNSServer dnsServer;
 extern WebServer server;

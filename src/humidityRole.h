@@ -14,5 +14,7 @@ public:
 private:
     ThresholdControl _humidifier;   // DIR_RAISE
     unsigned long _lastEval = 0;
+    bool _lastPub = false;
+    bool _havePublished = false;
     void publishStatus();
 };

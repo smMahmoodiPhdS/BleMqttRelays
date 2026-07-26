@@ -36,16 +36,36 @@ void HeaterCoolerRole::loop() {
         Serial.print(" -> Heater ");
         Serial.print(_heater.isOn() ? "ON" : "OFF");
         Serial.print(", Cooler ");
-        Serial.println(_cooler.isOn() ? "ON" : "OFF");
-        publishStatus();
+        Serial.print(_cooler.isOn() ? "ON" : "OFF");
+        if (_heater.isOverridden() || _cooler.isOverridden()) {
+            Serial.print("  (WARNING: a channel is not following commands)");
+        }
+        Serial.println();
     }
-}
 
-void HeaterCoolerRole::onConnect() {
+    // publishStatus() is self-guarding, so this also catches a coil state that
+    // changed under us via the slider without any control decision.
     publishStatus();
 }
 
+void HeaterCoolerRole::onConnect() {
+    _havePublished = false;   // force a publish onto a freshly connected broker
+    publishStatus();
+}
+
+// hOn/cOn now report what the actuator is *doing*, not what the controller
+// decided, because the coil-sense feedback lets us know the difference. A
+// slider parked on ALWAYS-ON shows up here as a heater that is on while the
+// thermostat wants it off - which is exactly the condition an operator wants
+// to see on the dashboard.
 void HeaterCoolerRole::publishStatus() {
-    mqtt_publishSensorStatus("ts", "hOn", _heater.isOn());
-    mqtt_publishSensorStatus("ts", "cOn", _cooler.isOn());
+    bool h = _heater.isActuallyOn();
+    bool c = _cooler.isActuallyOn();
+    if (_havePublished && h == _lastPubHeater && c == _lastPubCooler) return;
+
+    mqtt_publishSensorStatus("ts", "hOn", h);
+    mqtt_publishSensorStatus("ts", "cOn", c);
+    _lastPubHeater = h;
+    _lastPubCooler = c;
+    _havePublished = true;
 }

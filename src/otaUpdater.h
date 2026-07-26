@@ -1,9 +1,20 @@
 #pragma once
 #include <Arduino.h>
 
-// TODO: adjust to your actual model code / hardware revision naming.
+#include "boardConfig.h"
+
 #define OTA_MODEL_CODE "blemqttrelay"
+
+// The hardware version is part of the OTA topic and the binary filename, so the
+// two board variants can never pull each other's firmware. That matters more
+// than it looks: the pin maps overlap in hostile ways, and a protoboard binary
+// landing on the actuator PCB would drive relay outputs into DIP pull-ups and
+// the status LED. Keep these distinct.
+#if defined(BOARD_ACTUATOR_BLE)
+#define OTA_HARDWARE_VERSION "2-0"
+#else
 #define OTA_HARDWARE_VERSION "1-0"
+#endif
 
 void setup_ota();
 void loop_ota();

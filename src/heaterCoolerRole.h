@@ -16,5 +16,11 @@ private:
     ThresholdControl _heater;   // DIR_RAISE
     ThresholdControl _cooler;   // DIR_LOWER
     unsigned long _lastEval = 0;
+
+    // Last values actually put on the wire, so a slider-driven change in the
+    // measured state republishes even when the thermostat decision is unchanged.
+    bool _lastPubHeater = false, _lastPubCooler = false;
+    bool _havePublished = false;
+
     void publishStatus();
 };

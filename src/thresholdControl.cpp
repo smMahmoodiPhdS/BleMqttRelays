@@ -13,6 +13,20 @@ void ThresholdControl::addRelay(uint8_t relayIndex) {
     if (_relayCount < 4) _relays[_relayCount++] = relayIndex;
 }
 
+bool ThresholdControl::isActuallyOn() const {
+    for (uint8_t i = 0; i < _relayCount; i++) {
+        if (relay_getState(_relays[i])) return true;
+    }
+    return false;
+}
+
+bool ThresholdControl::isOverridden() const {
+    for (uint8_t i = 0; i < _relayCount; i++) {
+        if (relay_isOverridden(_relays[i])) return true;
+    }
+    return false;
+}
+
 bool ThresholdControl::ready() const {
     // RAISE needs the lower limit; LOWER needs the upper limit; both need current.
     if (!_hasCur) return false;
@@ -46,9 +60,11 @@ bool ThresholdControl::update() {
         }
     }
 
-    if (_on != prev) {
-        for (uint8_t i = 0; i < _relayCount; i++) relay_setState(_relays[i], _on);
-        return true;
-    }
-    return false;
+    // Re-assert every tick, not only on a transition. If someone parked the
+    // SS-13D07 slider off AUTO and then put it back, the coil would otherwise
+    // sit at whatever the slider left it at until the next threshold crossing.
+    // relay_setState is cheap and idempotent (it only writes NVS on a change).
+    for (uint8_t i = 0; i < _relayCount; i++) relay_setState(_relays[i], _on);
+
+    return _on != prev;
 }

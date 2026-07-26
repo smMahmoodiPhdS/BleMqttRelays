@@ -19,6 +19,8 @@ private:
         ThresholdControl ctrl;
         const char* sensorType = "";   // "ts" or "hs"
         const char* statusField = "";  // "hOn" or "cOn"
+        bool lastPub = false;          // last value published, to suppress repeats
+        bool havePublished = false;
     };
     Slot _slots[4];
     unsigned long _lastEval = 0;

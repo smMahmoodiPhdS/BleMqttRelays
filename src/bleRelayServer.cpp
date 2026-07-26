@@ -2,11 +2,14 @@
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
+#include <BLE2902.h>
 #include "wifiManagerTools.h"
 #include "boardConfig.h"
 #include "relayManager.h"
+#include "statusLeds.h"
 
 static BLECharacteristic* relayCharacteristics[RELAY_COUNT];
+static BLECharacteristic* statusCharacteristic = nullptr;
 
 // Encodes up to 6 chars of the farm owner name as hex, padded to 12 hex
 // digits (6 bytes), so different farm owners produce different UUIDs.
@@ -37,12 +40,34 @@ static String makeCharacteristicUuid(uint8_t relayNumOneBased) {
     return "beb5483e-36e1-" + segment + "-b7f5-" + hexEncodeOwner(farmOwner);
 }
 
+// Packed status for all four channels in one read/notify, so the app can learn
+// the whole board's reality in a single round trip instead of four. Relay N is
+// slot N-1; the per-relay UUID above keeps digit 4 of segment 3 as the relay
+// number, and this one uses '0' there, outside the 1..4 range the app scans for.
+static String makeStatusCharacteristicUuid() {
+    char dipHex[3];
+    snprintf(dipHex, sizeof(dipHex), "%02X", dipValue);
+    return "beb5483e-36e1-" + String(dipHex) + "80-b7f5-" + hexEncodeOwner(farmOwner);
+}
+
+// One byte per relay:
+//   bit0 = actual (measured coil state)
+//   bit1 = commanded
+//   bit2..3 = RelayMode (0 auto, 1 override_on, 2 override_off, 3 unknown)
+static uint8_t packRelayByte(const RelayStatus& s) {
+    return (uint8_t)((s.actual ? 0x01 : 0x00) |
+                     (s.commanded ? 0x02 : 0x00) |
+                     ((uint8_t)(s.mode & 0x03) << 2));
+}
+
 class BleServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) override {
         Serial.println("BLE client connected");
+        statusLeds_setBleConnected(true);
     }
     void onDisconnect(BLEServer* pServer) override {
         Serial.println("BLE client disconnected, restarting advertising");
+        statusLeds_setBleConnected(false);
         BLEDevice::startAdvertising();
     }
 };
@@ -66,10 +91,26 @@ public:
     }
 };
 
-static void onRelayStateChanged(uint8_t relayIndex, bool state) {
+// Fired by relayManager whenever the *observed* state changes - MQTT, BLE, the
+// control role, or the on-board slider. Push it out so a connected app never
+// has to poll and never shows a switch that disagrees with the coil.
+static void onRelayStateChanged(uint8_t relayIndex, const RelayStatus& status) {
     if (relayIndex >= RELAY_COUNT || !relayCharacteristics[relayIndex]) return;
-    uint8_t value = state ? 0x01 : 0x00;
+
+    // Per-relay characteristic keeps its simple 1-byte contract, but the byte
+    // is now the measured state rather than the last write we accepted.
+    uint8_t value = status.actual ? 0x01 : 0x00;
     relayCharacteristics[relayIndex]->setValue(&value, 1);
+    relayCharacteristics[relayIndex]->notify();
+
+    if (statusCharacteristic) {
+        uint8_t packed[RELAY_COUNT];
+        for (uint8_t i = 0; i < RELAY_COUNT; i++) {
+            packed[i] = packRelayByte(relay_getStatus(i));
+        }
+        statusCharacteristic->setValue(packed, RELAY_COUNT);
+        statusCharacteristic->notify();
+    }
 }
 
 void setup_bleRelayServer() {
@@ -88,12 +129,25 @@ void setup_bleRelayServer() {
         BLECharacteristic* characteristic = service->createCharacteristic(
             charUuid.c_str(),
             BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE |
-                BLECharacteristic::PROPERTY_WRITE_NR);
+                BLECharacteristic::PROPERTY_WRITE_NR | BLECharacteristic::PROPERTY_NOTIFY);
         characteristic->setCallbacks(new RelayCharCallbacks(i));
+        // NOTIFY needs a CCCD (0x2902) or the client has nothing to subscribe to.
+        characteristic->addDescriptor(new BLE2902());
 
         uint8_t initial = relay_getState(i) ? 0x01 : 0x00;
         characteristic->setValue(&initial, 1);
         relayCharacteristics[i] = characteristic;
+    }
+
+    // Packed 4-byte status: actual + commanded + override mode for every channel.
+    statusCharacteristic = service->createCharacteristic(
+        makeStatusCharacteristicUuid().c_str(),
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    statusCharacteristic->addDescriptor(new BLE2902());
+    {
+        uint8_t packed[RELAY_COUNT];
+        for (uint8_t i = 0; i < RELAY_COUNT; i++) packed[i] = packRelayByte(relay_getStatus(i));
+        statusCharacteristic->setValue(packed, RELAY_COUNT);
     }
 
     // TODO (BLE full control, planned): expose additional BLE characteristics so
