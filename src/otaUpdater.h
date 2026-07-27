@@ -5,6 +5,12 @@
 
 #define OTA_MODEL_CODE "blemqttrelay"
 
+// Host serving the firmware binaries. Must present a Let's Encrypt certificate,
+// because the download is now HTTPS validated against the pinned root - see the
+// note in otaUpdater.cpp about why plaintext OTA is the worst plaintext channel
+// in a system whose devices flash what they fetch.
+#define OTA_HOST "asanautomation.com"
+
 // The hardware version is part of the OTA topic and the binary filename, so the
 // two board variants can never pull each other's firmware. That matters more
 // than it looks: the pin maps overlap in hostile ways, and a protoboard binary

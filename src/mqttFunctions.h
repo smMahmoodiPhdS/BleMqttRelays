@@ -1,12 +1,13 @@
 #pragma once
 #include <PubSubClient.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include "relayManager.h"
 
 #define MQTT_RECONNECT_INTERVAL_MS 30000UL
 
-// Shared with otaUpdater, which needs a WiFiClient for HTTPUpdate.
-extern WiFiClient wifiClient;
+// Shared with otaUpdater, which needs a client for HTTPUpdate. Now a TLS
+// client, so OTA over https:// works with the same pinned root.
+extern WiFiClientSecure wifiClient;
 extern PubSubClient mqttClient;
 
 void setup_mqtt();

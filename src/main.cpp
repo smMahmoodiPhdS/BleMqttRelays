@@ -4,14 +4,19 @@
 
     Board: Hardware/kicad/actuator-node-Ble (see boardConfig.h for the pin map).
 
-    Relay MQTT topics (farmOwner is set via the captive portal):
-      actuator/<farmOwner>/<module>/rl0N/on     -> command relay N on
-      actuator/<farmOwner>/<module>/rl0N/off    -> command relay N off
-      actuator/<farmOwner>/<module>/rl0N/state  -> MEASURED coil state (retained)
-                                                   1 = off, 2 = on
-      actuator/<farmOwner>/<module>/rl0N/cmd    -> last commanded state (retained)
-      actuator/<farmOwner>/<module>/rl0N/mode   -> auto | override_on |
-                                                   override_off | unknown
+    Identity and broker settings come from the captive portal; nothing is
+    compiled in. Topics use the Option A namespace - the farm has its own level:
+
+      actuator/<owner>/<farm>/<module>/rl0N/on     -> command relay N on
+      actuator/<owner>/<farm>/<module>/rl0N/off    -> command relay N off
+      actuator/<owner>/<farm>/<module>/rl0N/state  -> MEASURED coil state
+                                                      (retained) 1 = off, 2 = on
+      actuator/<owner>/<farm>/<module>/rl0N/cmd    -> last commanded state
+      actuator/<owner>/<farm>/<module>/rl0N/mode   -> auto | override_on |
+                                                      override_off | unknown
+
+    Transport is MQTT over TLS on 8883, validating against a pinned ISRG Root
+    X1. There is no plaintext fallback and no old-broker path.
 
     `state` comes from the board's drain-sense feedback, so it is correct even
     when the on-board SS-13D07 slider - not the ESP - is driving the coil. When
@@ -37,6 +42,7 @@
 #include "roleManager.h"
 #include "hwWatchdog.h"
 #include "statusLeds.h"
+#include "netTime.h"
 
 #define WATCHDOG_TIMEOUT_S 30
 
@@ -75,6 +81,7 @@ void setup() {
 
     setup_relays();
     setup_wifiManager();
+    setup_netTime();     // must precede any TLS attempt - see netTime.h
     setup_mqtt();
     setup_bleRelayServer();
     setup_ota();
@@ -87,6 +94,7 @@ void loop() {
     esp_task_wdt_reset();
     relay_loop();          // poll coil feedback; fans out to MQTT + BLE on change
     loop_wifiManager();
+    netTime_loop();        // gates loop_mqtt(): no sane clock, no TLS
     loop_mqtt();
     loop_ota();
     roleManager_loop();

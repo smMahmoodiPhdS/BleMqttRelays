@@ -5,21 +5,25 @@
 #include "roleConfig.h"
 #include "roleManager.h"
 #include "sensorSim.h"
+#include "netTime.h"
+#include "rootCA.h"
 #include <WiFi.h>
 
-// TODO: set your MQTT broker host/port/credentials.
-#define MQTT_SERVER "87.107.165.201"
-#define MQTT_PORT 1883
-#define MQTT_USER "viewers"
-#define MQTT_PASSWORD "1234zxcV@"
+// Broker host, port and credentials all come from the captive portal now
+// (wifiManagerTools). They used to be #defines, which meant every board carried
+// the same shared account and moving the server required a reflash.
 
 // Broker-facing relay value convention: 1 = OFF, 2 = ON (Grafana traffic-light
 // can't key off 0). The firmware keeps pin state as a bool and converts only here.
 #define RELAY_MQTT_OFF "1"
 #define RELAY_MQTT_ON  "2"
 
-WiFiClient wifiClient;
+// TLS everywhere. The broker publishes only 8883; 1883 exists solely on the
+// server's internal Docker network and is not reachable from a device.
+WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
+
+static bool tlsConfigured = false;
 
 // Re-assert the retained relay topics on a slow cadence so a stale retained
 // value can never outlive reality.
@@ -28,10 +32,24 @@ PubSubClient mqttClient(wifiClient);
 static unsigned long lastReconnectAttempt = 0;
 static unsigned long lastRelayHeartbeat = 0;
 
+// ---------------------------------------------------------------------------
+// Topic construction. EVERY topic in this file goes through farmScope(), so the
+// namespace shape is defined in exactly one place.
+//
+// Option A: the farm gets its own level.
+//   before:  sensors/<owner>/ts1/cu
+//   now:     sensors/<owner>/<farm>/ts1/cu
+//
+// See Docs/Architecture/Namespace-Cutover-Readiness.md §1.
+// ---------------------------------------------------------------------------
+static String farmScope() {
+    return String(farmOwner) + "/" + String(farmId);
+}
+
 // ---- Addressed topics: <prefix><A> from the function/address switches --------
 static String moduleBase() {
     const RoleConfig& r = roleConfig_get();
-    return "actuator/" + String(farmOwner) + "/" + r.topicPrefix +
+    return "actuator/" + farmScope() + "/" + r.topicPrefix +
            String(roleConfig_address()) + "/";
 }
 static String relayTopic(uint8_t relayNumOneBased, const char* suffix) {
@@ -42,12 +60,12 @@ static String presenceTopic() {
 }
 static String functionTopic() {
     const RoleConfig& r = roleConfig_get();
-    return "configs/" + String(farmOwner) + "/" + r.topicPrefix +
+    return "configs/" + farmScope() + "/" + r.topicPrefix +
            String(roleConfig_address()) + "/function";
 }
 // sensors/<owner>/<type><A>/  — paired sensor of the current module (same index).
 static String sensorBase(const char* sensorType) {
-    return "sensors/" + String(farmOwner) + "/" + String(sensorType) +
+    return "sensors/" + farmScope() + "/" + String(sensorType) +
            String(roleConfig_address()) + "/";
 }
 
@@ -94,7 +112,11 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     // Route paired-sensor values (sensors/<owner>/<type><A>/<field>) to the role.
     {
-        String sbase = String("sensors/") + farmOwner + "/";
+        // Uses farmScope() too. This one is easy to miss because it builds a
+        // prefix for startsWith() rather than a topic to publish — leave it on
+        // the old shape and inbound sensor values are silently ignored while
+        // outbound publishing looks perfect.
+        String sbase = String("sensors/") + farmScope() + "/";
         if (topicStr.startsWith(sbase)) {
             String rest = topicStr.substring(sbase.length());   // "ts1/cu"
             int slash = rest.indexOf('/');
@@ -123,21 +145,61 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void setup_mqtt() {
-    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
     mqttClient.setCallback(mqttCallback);
     relay_addListener(mqtt_publishRelayStatus);
+    // Server and TLS are configured lazily in mqtt_reconnect(), once the clock
+    // is sane — setting a CA before the time is known just fails later.
 }
 
 static bool mqtt_reconnect() {
     if (mqttClient.connected()) return true;
     if (WiFi.status() != WL_CONNECTED) return false;
 
-    String clientId = String("BleMqttRelay-") + farmOwner + "-" +
+    // Gate 1: configuration. A board with no farmId would publish into a
+    // namespace the ACL does not grant, and every publish would be refused —
+    // which looks exactly like a dead board.
+    if (!config_isComplete()) {
+        static unsigned long lastNag = 0;
+        if (millis() - lastNag > 30000) {
+            lastNag = millis();
+            Serial.printf("[mqtt] not attempting: %s\n", config_problem());
+        }
+        return false;
+    }
+
+    // Gate 2: the clock. TLS validates notBefore/notAfter against it, and an
+    // ESP32 boots in 1970, so this must hold before the first handshake.
+    if (!netTime_isSynced()) {
+        static unsigned long lastNag = 0;
+        if (millis() - lastNag > 30000) {
+            lastNag = millis();
+            Serial.println("[mqtt] waiting for NTP — TLS cannot validate a certificate yet");
+        }
+        return false;
+    }
+
+    if (!tlsConfigured) {
+        wifiClient.setCACert(ISRG_ROOT_X1);
+        mqttClient.setServer(mqttHost, (uint16_t)atoi(mqttPort));
+        tlsConfigured = true;
+        Serial.printf("[mqtt] TLS armed for %s:%s, clock %s\n",
+                      mqttHost, mqttPort, netTime_iso8601().c_str());
+    }
+
+    String clientId = String("asn-") + farmOwner + "-" + farmId + "-" +
                       roleConfig_get().topicPrefix + String(roleConfig_address()) +
                       "-" + String(random(0xffff), HEX);
     String willTopic = presenceTopic();
-    if (!mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD,
-                            willTopic.c_str(), 0, true, "1")) return false;
+    if (!mqttClient.connect(clientId.c_str(), mqttUser, mqttPassword,
+                            willTopic.c_str(), 0, true, "1")) {
+        // PubSubClient state codes: -2 is a transport failure, which on a TLS
+        // link almost always means the handshake was rejected rather than the
+        // credentials.
+        int st = mqttClient.state();
+        Serial.printf("[mqtt] connect failed, state=%d%s\n", st,
+                      st == -2 ? " (transport/TLS — check the clock and the CA)" : "");
+        return false;
+    }
 
     // Presence (retained "2" = online) + role descriptor.
     mqttClient.publish(willTopic.c_str(), "2", true);

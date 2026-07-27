@@ -1,4 +1,5 @@
 #include "otaUpdater.h"
+#include "rootCA.h"
 #include "mqttFunctions.h"
 #include "boardConfig.h"
 #include <Preferences.h>
@@ -70,8 +71,26 @@ void loop_ota() {
 
     if (millis() - updateRequestedAtMs < randomDelayMs) return;
 
-    String binPath = String("http://asanautomation.ir/uploads/firmware/BleMqttRelays.ino_") +
+    // ---------------------------------------------------------------------
+    // HTTPS, using the same pinned ISRG Root X1 as the broker.
+    //
+    // This used to be plain http://. On a device that FLASHES whatever it
+    // downloads, that is the most dangerous plaintext channel in the system:
+    // anyone on-path could serve an arbitrary binary and the board would
+    // install it and reboot into it. TLS here is not about confidentiality —
+    // the firmware is not secret — it is about authenticating the source.
+    //
+    // The host must therefore serve a Let's Encrypt certificate. Point this at
+    // the same domain as the rest of the stack so one certificate covers it.
+    // If OTA starts failing after a chain change, this and mqttFunctions both
+    // need the new root; see rootCA.h.
+    // ---------------------------------------------------------------------
+    String binPath = String("https://") + OTA_HOST + "/uploads/firmware/BleMqttRelays.ino_" +
                       OTA_MODEL_CODE + "_" + OTA_HARDWARE_VERSION + "." + remoteVersion + ".bin";
+
+    // The shared client already trusts the pinned root (armed by mqtt_reconnect
+    // before this code can run - loop_ota only proceeds while MQTT is up).
+    wifiClient.setCACert(ISRG_ROOT_X1);
 
     httpUpdate.onStart(onOtaStart);
     httpUpdate.onEnd(onOtaEnd);
