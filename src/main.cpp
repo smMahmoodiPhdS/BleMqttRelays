@@ -19,8 +19,8 @@
     X1. There is no plaintext fallback and no old-broker path.
 
     `state` comes from the board's drain-sense feedback, so it is correct even
-    when the on-board SS-13D07 slider - not the ESP - is driving the coil. When
-    `mode` is not "auto" the slider (or a hardware fault) owns that channel and
+    when the on-board MT-102 toggle - not the ESP - is driving the coil. When
+    `mode` is not "auto" the toggle (or a hardware fault) owns that channel and
     commands will not change anything.
 
     BLE: one service; one read/write/notify characteristic per relay (0x01 = on),

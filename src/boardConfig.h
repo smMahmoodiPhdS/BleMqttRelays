@@ -27,23 +27,29 @@
 // (Hardware/kicad/actuator-node-Ble, source of truth: ble_relay.py -> ble_relay.net)
 //
 // Relay channel (x4):
-//   RLn_IO --> SS-13D07 1P3T slider throw C ("AUTO")
-//              throw A = +3V3  ("ALWAYS ON"), throw B = GND ("OFF")
-//         --> COM --> 1k --> AO3400 gate (100k gate pulldown) --> coil low side
-//   So the ESP only owns the relay when the slider is in AUTO. Driving RLn_IO
+//   RLn_IO --> MT-102 SPDT ON-OFF-ON toggle, one extreme ("AUTO")
+//              other extreme = +3V3 ("ALWAYS ON"), CENTRE = OPEN ("OFF")
+//         --> COM (centre pin) --> 1k --> AO3400 gate --> coil low side
+//   So the ESP only owns the relay when the toggle is in AUTO. Driving RLn_IO
 //   HIGH energizes the coil.
 //
+//   The OFF position connects NOTHING. The relay is held off by R_GPD, the 22k
+//   gate pulldown, which makes R_GPD safety-critical on this board rather than
+//   the boot-time nicety it was when OFF shorted the gate to GND. A channel
+//   that will not release in the centre position is a hardware fault, not a
+//   firmware one - check that resistor first.
+//
 // Relay feedback (x4, NEW on this board):
-//   RLn_SW (FET drain / coil low side) --> 10k --+--> SENn
+//   RLn_SW (FET drain / coil low side) --> 18k --+--> SENn
 //                                                 |
 //                                                20k
 //                                                 |
 //                                                GND
 //   Coil energized  -> drain ~0 V   -> SENn ~0 mV      (LOW)
-//   Coil released   -> drain ~5 V   -> SENn ~3333 mV   (HIGH)
+//   Coil released   -> drain ~5 V   -> SENn ~2630 mV   (HIGH)
 //   => SENn is INVERTED: LOW means the relay is ON.
 //   This reads the true coil state no matter who set it - MQTT, BLE, or the
-//   on-board slider - which is the whole point of the feedback channel.
+//   on-board toggle - which is the whole point of the feedback channel.
 //
 //   SEN1..SEN4 land on IO34 / IO35 / SENSOR_VP(IO36) / SENSOR_VN(IO39).
 //   All four are INPUT-ONLY and all four are ADC1 channels (ADC1 keeps working
@@ -74,18 +80,30 @@ struct HardwarePins {
     //          which is a hard silicon limitation, not a driver quirk.
     // False -> plain digitalRead().
     //
-    // Digital is perfectly adequate here. The divider presents ~3.33 V when the
-    // coil is released and ~0.05 V when energized, against thresholds of
-    // VIH 2.48 V and VIL 0.83 V - roughly 850 mV and 780 mV of margin. The only
-    // thing lost is the millivolt reading used for diagnostics and for spotting
-    // a half-driven gate, so RELAY_FB_UNKNOWN never fires in digital mode.
+    // WHICH IS ADEQUATE DEPENDS ON THE BOARD - the two variants differ:
+    //
+    //   actuator-node-Ble PCB   18k/20k -> 2.63 V released. Against VIH
+    //                           0.75 x VDD = 2.48 V that is ~150 mV of margin,
+    //                           and NONE at the top of rail tolerance
+    //                           (3.45 V -> VIH 2.59 V). MUST stay analog.
+    //
+    //   HW_4_6 protoboard rig   hand-wired 10k/20k -> 3.33 V released, on
+    //                           different pins. Against the same VIH that is
+    //                           ~850 mV, and ~780 mV below VIL for the
+    //                           energized state. Digital is fine there.
+    //
+    // Reading analog also keeps the millivolt value used for diagnostics and
+    // for spotting a half-driven gate; RELAY_FB_UNKNOWN never fires in digital
+    // mode. Do not flip this flag on the PCB variant to free an ADC channel -
+    // the margin the old comment promised does not exist on that hardware.
     bool relayFeedbackAnalog;
 };
 
 extern const HardwarePins boardPins;
 
 // Analog thresholds for the SENn divider, in millivolts, with hysteresis.
-// Nominal levels are 0 mV (energized) and ~3333 mV (released); anything in
+// Nominal levels are 0 mV (energized) and ~2630 mV released on the PCB
+// (~3333 mV on the protoboard rig, which reads digitally anyway); anything in
 // between is treated as "no decision yet" and the previous reading is kept.
 #define RELAY_FB_MV_ON_MAX   1000   // below this -> coil energized
 #define RELAY_FB_MV_OFF_MIN  1900   // above this -> coil released
@@ -95,7 +113,7 @@ extern const HardwarePins boardPins;
 extern uint8_t dipValue;
 
 // The 8 DIP bits split into two 4-bit switches (see
-// Docs/Architecture/Addressing-and-Topic-Design.md §1):
+// Docs/Architecture/APP-AND-CONTRACT.md §1.3 (role prefixes)):
 //   addressValue  = dipValue & 0x0F        (sw1, DIP1-4) -> module address 0..15
 //   functionValue = (dipValue >> 4) & 0x0F (sw2, DIP5-8) -> function code 0..15
 // NOTE: the docstring at the top of ble_relay.py states the opposite split

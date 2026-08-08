@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // Decodes the function switch (sw2 / functionValue) into the board's role at
-// runtime — one binary, no #ifdef. See Docs/Architecture/Addressing-and-Topic-Design.md.
+// runtime — one binary, no #ifdef. See Docs/Architecture/APP-AND-CONTRACT.md §1.3.
 
 enum RoleClass {
     ROLE_HEATER_COOLER,

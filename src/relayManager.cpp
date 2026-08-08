@@ -245,7 +245,7 @@ void relay_loop() {
                           i + 1, measured ? "ON" : "OFF", relay_modeName(newMode), mv);
             if (!wasOverridden && (newMode == RELAY_OVERRIDE_ON || newMode == RELAY_OVERRIDE_OFF)) {
                 Serial.printf("[relay] ch%u is not following commands - check the "
-                              "SS-13D07 slider (SW_MODE%u)\n", i + 1, i + 1);
+                              "MT-102 toggle (SW_MODE%u)\n", i + 1, i + 1);
             }
             notifyListeners(i);
         }

@@ -7,8 +7,8 @@
 // Relay state, now measured rather than assumed.
 //
 // Before the feedback hardware existed, "relay state" meant "the last value the
-// firmware wrote to the GPIO". That was a lie whenever the on-board SS-13D07
-// slider was in its ALWAYS-ON or OFF position, because the slider steals the
+// firmware wrote to the GPIO". That was a lie whenever the on-board MT-102
+// toggle was in its ALWAYS-ON or OFF position, because the toggle steals the
 // FET gate from the ESP entirely. This board senses the coil's low side, so we
 // can now report what the relay is actually doing.
 //

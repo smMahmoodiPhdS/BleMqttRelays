@@ -22,17 +22,27 @@ change one without the other.
 
 ## Relay coil feedback
 
-Each relay channel has an SS-13D07 1P3T slider that selects the FET gate source:
+Each relay channel has an MT-102 SPDT ON-OFF-ON toggle that selects the FET
+gate source. The centre position is **open**, not grounded — the relay is held
+off by `R_GPD`, the 22k gate pulldown:
 
-| Slider | Gate driven by | Result |
+| Lever | Gate driven by | Result |
 |---|---|---|
 | ALWAYS ON | +3V3 | relay energized, ESP32 ignored |
-| OFF | GND | relay released, ESP32 ignored |
+| OFF (centre) | nothing — `R_GPD` pulls the gate down | relay released, ESP32 ignored |
 | AUTO | `RLn_IO` from the ESP32 | relay follows commands |
 
-A 10k/20k divider on the coil's low side feeds `SENn` (GPIO34/35/36/39, all
+Because OFF is the centre detent, moving between ALWAYS ON and AUTO always
+passes through OFF, so the coil drops out on the way rather than slamming
+between two driven states. It also means `R_GPD` is the only thing defining
+OFF — if a board ever comes back with a channel that will not release in the
+centre position, check that resistor before suspecting the firmware.
+
+An 18k/20k divider on the coil's low side feeds `SENn` (GPIO34/35/36/39, all
 input-only ADC1 channels). Energized coil pulls the FET drain to ~0 V; released
-coil sits at ~3.33 V. **The sense is inverted: LOW means the relay is ON.**
+coil sits at ~2.63 V. **The sense is inverted: LOW means the relay is ON.**
+(The protoboard rig uses a hand-wired 10k/20k on different pins, giving ~3.33 V
+and read digitally — see `boardConfig.cpp`.)
 
 The firmware polls all four every 50 ms with hysteresis and a 3-sample debounce,
 and reports three things per channel:
@@ -136,12 +146,17 @@ after a random delay (up to 5 minutes). Adjust `OTA_MODEL_CODE` /
 - GPIO15 carries `DIP3` and has a 10k pull-up. With DIP3 ON the pin is low at
   boot, which silences the ROM bootloader log — cosmetic, but surprising when
   debugging.
-- The `SENn` divider presents 5 V × 20k/30k ≈ **3.33 V** to the ESP32 when a
-  relay is released. That is above the 3.3 V rail, though inside the 3.6 V
-  absolute maximum. It works, but changing `R_SB` from 20k to 18k would bring it
-  to 3.16 V with margin to spare. Worth doing on the next PCB revision.
-- The `ble_relay.py` docstring says "DIP 1-4 function, 5-8 type/address". The
-  architecture doc and this firmware use the opposite split (1-4 = address,
-  5-8 = function). The schematic comment is the one that is wrong.
+- The `SENn` divider on this board is **18k/20k → 2.63 V** when a relay is
+  released, comfortably under the 3.3 V rail. (It was 10k/20k → 3.33 V, which
+  sat above the rail; that was fixed by raising `R_ST`, not by lowering `R_SB`
+  as an earlier note here suggested.) Analog thresholds `RELAY_FB_MV_ON_MAX`
+  1000 mV and `RELAY_FB_MV_OFF_MIN` 1900 mV both sit clear of it.
+  **Do not switch this board to `digitalRead()`** — at 2.63 V against a VIH of
+  0.75 × VDD the margin is roughly 150 mV, and none at the top of rail
+  tolerance. The protoboard variant reads digitally, but on a different
+  hand-wired divider; see `boardConfig.cpp`.
+- `R_GPD` (22k, gate pulldown) is what holds a relay off when its MT-102 is in
+  the centre position — the centre is open, not grounded. It is a
+  safety-critical part on this board, not an optional pulldown.
 - BLE identity truncates the owner name to 6 characters, so two owners sharing a
   6-character prefix produce the same UUIDs. Pre-existing; see the plan doc §2.4.

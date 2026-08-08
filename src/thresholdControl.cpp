@@ -61,8 +61,8 @@ bool ThresholdControl::update() {
     }
 
     // Re-assert every tick, not only on a transition. If someone parked the
-    // SS-13D07 slider off AUTO and then put it back, the coil would otherwise
-    // sit at whatever the slider left it at until the next threshold crossing.
+    // MT-102 toggle off AUTO and then put it back, the coil would otherwise
+    // sit at whatever the toggle left it at until the next threshold crossing.
     // relay_setState is cheap and idempotent (it only writes NVS on a change).
     for (uint8_t i = 0; i < _relayCount; i++) relay_setState(_relays[i], _on);
 

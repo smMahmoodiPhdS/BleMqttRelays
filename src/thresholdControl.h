@@ -29,7 +29,7 @@ public:
 
     // What the actuator is actually doing, read back from the coil-sense
     // feedback: true if any relay this controller owns is energized. Differs
-    // from isOn() when an SS-13D07 slider is off AUTO or a channel has failed.
+    // from isOn() when an MT-102 toggle is off AUTO or a channel has failed.
     bool isActuallyOn() const;
 
     // True if any relay this controller owns is not following commands.

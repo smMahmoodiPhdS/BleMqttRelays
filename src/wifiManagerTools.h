@@ -44,7 +44,10 @@ extern char farmOwner[CFG_NAME_LEN];   // topic level 2, e.g. "smmahmoodi"
 extern char farmId[CFG_NAME_LEN];      // topic level 3, e.g. "farm01"
 extern char mqttHost[CFG_HOST_LEN];    // e.g. "link.asanautomation.com"
 extern char mqttPort[6];               // 8883
-extern char mqttUser[CFG_USER_LEN];    // dev.<owner>.<farm>.<module>
+extern char mqttUser[CFG_USER_LEN];    // dev.<farm>.<owner>.<module>, e.g.
+                                       // dev.farm01.smmahmoodi.rmhc1
+                                       // A Mosquitto USERNAME, not a topic and
+                                       // not a hostname. From credentials.txt.
 extern char mqttPassword[CFG_PASS_LEN];
 
 void setup_wifiManager();

@@ -32,6 +32,16 @@ static bool tlsConfigured = false;
 static unsigned long lastReconnectAttempt = 0;
 static unsigned long lastRelayHeartbeat = 0;
 
+// The first connect attempt is immediate; MQTT_RECONNECT_INTERVAL_MS applies only
+// to RETRIES after a real rejection.
+//
+// Without this flag, `millis() - lastReconnectAttempt >= MQTT_RECONNECT_INTERVAL_MS`
+// is false for the first 30 seconds of uptime (because lastReconnectAttempt starts
+// at 0), so a perfectly healthy board sits idle for half a minute before it even
+// tries. Stacked on the NTP wait, first publish lands ~35 s after boot — which on
+// the bench is indistinguishable from a board that is not working.
+static bool everAttempted = false;
+
 // ---------------------------------------------------------------------------
 // Topic construction. EVERY topic in this file goes through farmScope(), so the
 // namespace shape is defined in exactly one place.
@@ -40,7 +50,7 @@ static unsigned long lastRelayHeartbeat = 0;
 //   before:  sensors/<owner>/ts1/cu
 //   now:     sensors/<owner>/<farm>/ts1/cu
 //
-// See Docs/Architecture/Namespace-Cutover-Readiness.md §1.
+// See Docs/Architecture/APP-AND-CONTRACT.md §1.
 // ---------------------------------------------------------------------------
 static String farmScope() {
     return String(farmOwner) + "/" + String(farmId);
@@ -151,9 +161,21 @@ void setup_mqtt() {
     // is sane — setting a CA before the time is known just fails later.
 }
 
-static bool mqtt_reconnect() {
-    if (mqttClient.connected()) return true;
-    if (WiFi.status() != WL_CONNECTED) return false;
+// Three outcomes, not two — and the distinction matters for the retry timer.
+//
+// NotReady means we never touched the network: no WiFi, no configuration, or no
+// sane clock yet. Those are pre-flight checks, and burning a 30-second retry
+// interval on one is wrong. A board that boots a few seconds before NTP lands
+// would otherwise fail its first attempt on the clock gate and then sit idle for
+// half a minute after the clock had become perfectly good.
+//
+// Failed means the broker actually rejected us — bad credentials, TLS refused,
+// host unreachable. That earns the backoff.
+enum class ConnectOutcome { NotReady, Failed, Connected };
+
+static ConnectOutcome mqtt_reconnect() {
+    if (mqttClient.connected()) return ConnectOutcome::Connected;
+    if (WiFi.status() != WL_CONNECTED) return ConnectOutcome::NotReady;
 
     // Gate 1: configuration. A board with no farmId would publish into a
     // namespace the ACL does not grant, and every publish would be refused —
@@ -164,7 +186,7 @@ static bool mqtt_reconnect() {
             lastNag = millis();
             Serial.printf("[mqtt] not attempting: %s\n", config_problem());
         }
-        return false;
+        return ConnectOutcome::NotReady;
     }
 
     // Gate 2: the clock. TLS validates notBefore/notAfter against it, and an
@@ -175,7 +197,7 @@ static bool mqtt_reconnect() {
             lastNag = millis();
             Serial.println("[mqtt] waiting for NTP — TLS cannot validate a certificate yet");
         }
-        return false;
+        return ConnectOutcome::NotReady;
     }
 
     if (!tlsConfigured) {
@@ -198,7 +220,7 @@ static bool mqtt_reconnect() {
         int st = mqttClient.state();
         Serial.printf("[mqtt] connect failed, state=%d%s\n", st,
                       st == -2 ? " (transport/TLS — check the clock and the CA)" : "");
-        return false;
+        return ConnectOutcome::Failed;
     }
 
     // Presence (retained "2" = online) + role descriptor.
@@ -221,15 +243,24 @@ static bool mqtt_reconnect() {
     roleManager_onConnect();
     relay_republishAll();
     lastRelayHeartbeat = millis();
-    return true;
+    return ConnectOutcome::Connected;
 }
 
 void loop_mqtt() {
     if (!mqttClient.connected()) {
         unsigned long now = millis();
-        if (now - lastReconnectAttempt >= MQTT_RECONNECT_INTERVAL_MS) {
+        if (everAttempted && (now - lastReconnectAttempt) < MQTT_RECONNECT_INTERVAL_MS) {
+            return;   // still backing off from a real rejection
+        }
+        // The gates inside cost nothing and nag on timers of their own, so it is
+        // safe to call this every loop while they are unsatisfied.
+        ConnectOutcome outcome = mqtt_reconnect();
+        if (outcome != ConnectOutcome::NotReady) {
+            // Only a real attempt arms the backoff. A pre-flight refusal does not,
+            // so the board connects the instant the clock lands rather than up to
+            // 30 s later.
+            everAttempted = true;
             lastReconnectAttempt = now;
-            mqtt_reconnect();
         }
         return;
     }
