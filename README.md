@@ -6,6 +6,47 @@ Target board: **`Hardware/kicad/actuator-node-Ble`**. The pin map in
 `src/boardConfig.cpp` is derived from `ble_relay.py` / `ble_relay.net`; do not
 change one without the other.
 
+> ### Direction of travel, 2026-08-08 — read before starting work here
+>
+> Architecture: [`../../Docs/Architecture/GATEWAY-ARCHITECTURE-AND-MIGRATION.md`](../../Docs/Architecture/GATEWAY-ARCHITECTURE-AND-MIGRATION.md)
+>
+> This board is becoming **BLE-only**. Under ADR-017 a per-saloon gateway is the
+> farm's only MQTT client; it feeds this node `cu`, `ll` and `ul` over BLE.
+>
+> **What does not change, and this is the important part: `ThresholdControl` and
+> the role system stay here.** ADR-016 keeps control authority on the actuator,
+> so a gateway reboot, OTA or watchdog reset does not stop the heaters. This
+> board caches its limits in NVS and keeps deciding on its own. That property is
+> what distinguishes this design from a cloud-dependent controller, and it is why
+> the tested hysteresis code is not being moved anywhere.
+>
+> Work queued for phase G2, in order:
+>
+> 1. **Bluedroid → NimBLE** in `bleRelayServer.cpp`. Drop every `new BLE2902()`
+>    — NimBLE creates the CCCD itself, and leaving them in is the commonest port
+>    error.
+> 2. **Fixed service UUIDs** from `Firmware/common/ble_uuids.h`, replacing the
+>    `farmOwner`-derived scheme. Under the current scheme `smMahmoodi` and
+>    `smMahmoodiSecond` collide, so two farms would present each other's boards
+>    as their own. **Ship this in the same commit as the app change** — the app
+>    parses the relay index out of the UUID today and breaks otherwise.
+> 3. **Security.** Every characteristic here is currently created with no
+>    security properties at all: anyone in radio range can write a relay.
+>    Tolerable while the slider is the real control path; not tolerable once BLE
+>    carries setpoints. LE Secure Connections + bonding + MITM,
+>    `WRITE_ENC | WRITE_AUTHEN` on every command characteristic.
+> 4. **Port `limitsStore`** from `../bleMqttSensor/src/` — it is
+>    transport-agnostic and host-tested. Copy it; do not rewrite it.
+> 5. **`LightRole` is a five-line stub**, and the lighting schedule has no
+>    consumer on any transport today. See `APP-AND-CONTRACT.md` §4.
+> 6. **Stop `sensorSim.cpp` publishing `daily_max`/`daily_min`** — Node-RED owns
+>    them, and two writers on a retained topic is a real conflict rather than an
+>    untidiness.
+>
+> `mqttFunctions`, `netTime` and `rootCA.h` are scheduled for deletion at phase
+> G4. `wifiManagerTools` and `otaUpdater` stay, as the maintenance and recovery
+> path.
+
 ## Features
 
 - BLE server: a read/write/**notify** characteristic per relay, plus a packed

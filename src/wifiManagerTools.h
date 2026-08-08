@@ -12,7 +12,7 @@
 //   * Byte budget. The advertised name lives in the 31-octet SCAN_RSP packet,
 //     minus 2 bytes of AD overhead = 29 characters total. "BleMqttRelay-" ate
 //     13 of them; "ASN-" costs 4, leaving 25. See the arithmetic in
-//     Docs/Architecture/Namespace-Cutover-Readiness.md §2.4 — and note that 25
+//     Docs/Architecture/APP-AND-CONTRACT.md §2 (identity, no-truncation) — and note that 25
 //     still does not satisfy the no-truncation rule, so the full identity has
 //     to move to a GATT characteristic regardless. This is headroom, not a fix.
 //
@@ -23,7 +23,7 @@
 
 // Field sizes. farmOwner and farmId are topic levels AND components of the
 // broker account name, so they follow the 64-char rule from
-// Docs/Architecture/Namespace-Cutover-Readiness.md §2.3.
+// Docs/Architecture/APP-AND-CONTRACT.md §1 (the topic contract).
 #define CFG_NAME_LEN   65     // 64 chars + NUL
 #define CFG_HOST_LEN   96
 #define CFG_USER_LEN   96
